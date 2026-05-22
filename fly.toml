@@ -1,0 +1,27 @@
+# Spencer OS — Fly.io deployment config
+# Deploy: flyctl launch (first time) or flyctl deploy
+
+app            = "spencer-os"
+primary_region = "den"       # Denver — closest to Mountain Time
+
+[build]
+
+[env]
+  PORT     = "8080"
+  BASE_URL = "https://spencer-os.fly.dev"
+
+[http_service]
+  internal_port       = 8080
+  force_https         = true
+  auto_stop_machines  = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type       = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
