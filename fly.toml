@@ -1,27 +1,29 @@
-# Spencer OS — Fly.io deployment config
-# Deploy: flyctl launch (first time) or flyctl deploy
+# fly.toml app configuration file generated for spencer-os on 2026-05-22T11:28:09-06:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app            = "spencer-os"
-primary_region = "den"       # Denver — closest to Mountain Time
+app = 'spencer-os'
+primary_region = 'dfw'
 
 [build]
 
 [env]
-  PORT     = "8080"
-  BASE_URL = "https://spencer-os.fly.dev"
+  BASE_URL = 'https://spencer-os.fly.dev'
+  PORT = '8080'
 
 [http_service]
-  internal_port       = 8080
-  force_https         = true
-  auto_stop_machines  = "stop"
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
 
   [http_service.concurrency]
-    type       = "connections"
+    type = 'connections'
     hard_limit = 25
     soft_limit = 20
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  size = 'shared-cpu-1x'
+  memory = '256mb'

@@ -46,19 +46,14 @@ _load_dotenv()
 # Config  (all values come from env — never hardcoded)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _require(key: str) -> str:
-    val = os.environ.get(key, '').strip()
-    if not val:
-        raise RuntimeError(f'Missing required env var: {key}  (add it to .env)')
-    return val
+PORT       = int(os.environ.get('PORT', 8765))
+BASE_URL   = os.environ.get('BASE_URL', f'http://localhost:{PORT}').rstrip('/')
 
-PORT      = int(os.environ.get('PORT', 8765))
-BASE_URL  = os.environ.get('BASE_URL', f'http://localhost:{PORT}').rstrip('/')
-
-SUPA_URL  = _require('SUPA_URL')
-SUPA_KEY  = _require('SUPA_KEY')
-TG_TOKEN  = _require('TG_TOKEN')
-OPENAI_KEY = _require('OPENAI_KEY')
+# Soft reads — missing vars disable the relevant feature but never crash startup
+SUPA_URL   = os.environ.get('SUPA_URL',   '').strip()
+SUPA_KEY   = os.environ.get('SUPA_KEY',   '').strip()
+TG_TOKEN   = os.environ.get('TG_TOKEN',   '').strip()
+OPENAI_KEY = os.environ.get('OPENAI_KEY', '').strip()
 
 TG_API_BASE  = f'https://api.telegram.org/bot{TG_TOKEN}'
 TG_FILE_BASE = f'https://api.telegram.org/file/bot{TG_TOKEN}'
@@ -223,6 +218,9 @@ def _handle_tg_update(update: dict) -> None:
     if not msg:
         return
     chat_id = msg['chat']['id']
+    if not TG_TOKEN or not OPENAI_KEY or not SUPA_URL:
+        print('[tg handler] missing TG_TOKEN / OPENAI_KEY / SUPA_URL — skipping update')
+        return
     try:
         source = 'telegram_text'
         text   = msg.get('text', '').strip()
@@ -306,6 +304,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
     def _api_config(self):
         """Return public client-side config. Supabase anon key is safe to expose."""
+        if not SUPA_URL or not SUPA_KEY:
+            self._json_error(503, 'SUPA_URL / SUPA_KEY not set — add them to .env or Fly secrets')
+            return
         body = json.dumps({'supaUrl': SUPA_URL, 'supaKey': SUPA_KEY}).encode()
         self.send_response(200)
         self.send_header('Content-Type',   'application/json')
