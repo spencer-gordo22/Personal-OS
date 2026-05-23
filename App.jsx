@@ -129,6 +129,194 @@ Portfolio: QQQ, GLD, VOO, ETN
 - Building a personal OS dashboard to track and optimize daily life
 - Direct communication style; prefers specific, actionable advice`;
 
+/* ── URL-safe base64 → Uint8Array (needed for VAPID applicationServerKey) ── */
+function _urlB64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+/* ── Push Notification Settings panel ── */
+function PushSettings() {
+  const [permission,  setPermission]  = useStateApp(
+    () => (typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
+  );
+  const [subStatus,   setSubStatus]   = useStateApp('idle'); // idle | subscribing | subscribed | error
+  const [subError,    setSubError]    = useStateApp('');
+  const [vapidKey,    setVapidKey]    = useStateApp('');
+  const [testSent,    setTestSent]    = useStateApp(false);
+  const [showSql,     setShowSql]     = useStateApp(false);
+
+  useEffectApp(() => {
+    fetch('/api/push/vapid-key')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.publicKey) setVapidKey(d.publicKey); })
+      .catch(() => {});
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready
+        .then(reg => reg.pushManager.getSubscription())
+        .then(sub => { if (sub) setSubStatus('subscribed'); })
+        .catch(() => {});
+    }
+  }, []);
+
+  const subscribe = async () => {
+    if (!vapidKey) { setSubError('VAPID key not available — set VAPID_PUBLIC_KEY on the server'); return; }
+    if (!('serviceWorker' in navigator)) { setSubError('Service workers not supported in this browser'); return; }
+    setSubStatus('subscribing');
+    setSubError('');
+    try {
+      const perm = await Notification.requestPermission();
+      setPermission(perm);
+      if (perm !== 'granted') { setSubStatus('idle'); setSubError('Notification permission denied'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly:      true,
+        applicationServerKey: _urlB64ToUint8Array(vapidKey),
+      });
+      const resp = await fetch('/api/push/subscribe', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(sub.toJSON()),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      setSubStatus('subscribed');
+    } catch (err) {
+      setSubStatus('error');
+      setSubError(err.message);
+    }
+  };
+
+  const sendTest = async () => {
+    setSubError('');
+    try {
+      await fetch('/api/push/send', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ title: 'Spencer OS · Test 🔔', body: 'Push notifications are working!', url: '/' }),
+      });
+      setTestSent(true);
+      setTimeout(() => setTestSent(false), 3000);
+    } catch (err) {
+      setSubError(err.message);
+    }
+  };
+
+  const SQL = `-- Run once in Supabase SQL editor
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  endpoint   text   UNIQUE NOT NULL,
+  p256dh     text   NOT NULL,
+  auth       text   NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "service role only" ON push_subscriptions
+  USING (true) WITH CHECK (true);`;
+
+  const permColor = permission === 'granted' ? 'var(--pos)' : permission === 'denied' ? 'var(--neg)' : 'var(--fg-3)';
+  const inpSt = {
+    background: 'var(--bg-1)', border: '1px solid var(--border-strong)', borderRadius: 3,
+    padding: '6px 10px', color: 'var(--fg-1)', fontFamily: 'var(--font-mono)',
+    fontSize: 10, outline: 'none', width: '100%', boxSizing: 'border-box',
+  };
+
+  return (
+    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', marginBottom: 16 }}>
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontFamily: 'var(--font-sans)', fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-2)' }}>
+          Push Notifications
+        </span>
+        {subStatus === 'subscribed' && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--pos)', border: '1px solid var(--pos)', borderRadius: 2, padding: '1px 5px', letterSpacing: '0.08em' }}>
+            ACTIVE
+          </span>
+        )}
+      </div>
+      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+        {/* Status row */}
+        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Browser permission</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: permColor, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{permission}</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Subscription</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: subStatus === 'subscribed' ? 'var(--pos)' : subStatus === 'error' ? 'var(--neg)' : 'var(--fg-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {subStatus === 'subscribed' ? '● subscribed' : subStatus === 'subscribing' ? '… subscribing' : subStatus === 'error' ? '✕ error' : '○ not subscribed'}
+          </span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>VAPID key</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: vapidKey ? 'var(--pos)' : 'var(--neg)', letterSpacing: '0.04em' }}>
+            {vapidKey ? `${vapidKey.slice(0, 20)}…` : 'not configured'}
+          </span>
+        </div>
+
+        {subError && (
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--neg)', background: 'rgba(255,77,109,0.08)', padding: '6px 8px', borderRadius: 3 }}>
+            {subError}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 2 }}>
+          {subStatus !== 'subscribed' ? (
+            <span
+              onClick={subscribe}
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                color: '#001218', background: 'var(--accent)',
+                padding: '4px 12px', borderRadius: 3, cursor: 'pointer', letterSpacing: '0.06em',
+              }}>
+              {subStatus === 'subscribing' ? 'ENABLING…' : 'ENABLE NOTIFICATIONS'}
+            </span>
+          ) : (
+            <span
+              onClick={sendTest}
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                color: testSent ? 'var(--pos)' : 'var(--accent)',
+                cursor: 'pointer', letterSpacing: '0.06em', transition: 'color 200ms',
+              }}>
+              {testSent ? '✓ SENT!' : 'SEND TEST PUSH'}
+            </span>
+          )}
+        </div>
+
+        {/* Supabase table SQL */}
+        <div>
+          <span
+            onClick={() => setShowSql(s => !s)}
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+            {showSql ? 'HIDE SETUP SQL ▲' : 'SHOW SETUP SQL ▼'}
+          </span>
+          {showSql && (
+            <pre style={{
+              marginTop: 8, padding: '10px 12px',
+              background: 'var(--bg-1)', border: '1px solid var(--border)',
+              borderRadius: 4, fontFamily: 'var(--font-mono)', fontSize: 10,
+              color: 'var(--fg-2)', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word', overflow: 'auto',
+            }}>
+              {SQL}
+            </pre>
+          )}
+        </div>
+
+        <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 8 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', lineHeight: 1.7 }}>
+            Auto-triggers: new Telegram task/reminder · daily 8am reminder<br/>
+            Server env: <code style={{ background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2 }}>VAPID_PUBLIC_KEY</code>  <code style={{ background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2 }}>VAPID_PRIVATE_KEY</code>  <code style={{ background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2 }}>VAPID_SUBJECT</code>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 function Settings() {
   const [memory,    setMemory]    = useLocalStorage('sos_memory_prompt', DEFAULT_MEMORY);
   const [copied,    setCopied]    = useStateApp(false);
@@ -252,6 +440,9 @@ function Settings() {
         </div>
       </div>
 
+      {/* ── Push Notifications ── */}
+      <PushSettings />
+
       {/* ── Module Management Guide (pinned reference) ── */}
       <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', marginBottom: 16 }}>
         <div style={{
@@ -349,7 +540,7 @@ function Settings() {
         </div>
         <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
-            ['Version',    'Spencer OS v4.4.0'],
+            ['Version',    'Spencer OS v4.5.0'],
             ['Backend',    'Python 3 · serve.py'],
             ['Persistence','Supabase kv_store + crm_items'],
             ['Auth',       'localStorage sos_auth_v1'],
@@ -451,7 +642,7 @@ function App() {
               fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-3)',
               letterSpacing: '0.08em', textTransform: 'uppercase',
             }}>
-              <span>spencer_os · v 4.3.0 · build d2e9f</span>
+              <span>spencer_os · v 4.5.0 · build e3f7a</span>
               <span style={{ display: 'flex', gap: 14 }}>
                 <span>uptime · 14d 06h</span>
                 <span>sync · ok</span>

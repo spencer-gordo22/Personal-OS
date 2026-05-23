@@ -5,14 +5,41 @@ const HR_DATA    = [58, 60, 59, 62, 61, 60, 58, 59, 57, 58, 59, 58];
 const SLEEP_BARS = [6.8, 7.2, 6.4, 7.8, 8.1, 6.9, 7.4];
 
 const INITIAL_HEALTH = {
-  hr:       0,
-  hrv:      0,
-  sleep:    0,
-  steps:    0,
-  weight:   0,
-  vo2:      0,
-  recovery: 0,
+  hr:         0,
+  hrv:        0,
+  sleep:      0,
+  sleep_perf: 0,   // sleep performance % from WHOOP
+  steps:      0,
+  weight:     0,   // stored in lbs
+  vo2:        0,
+  recovery:   0,
 };
+
+/* ── WHOOP color scale ──────────────────────────────────────
+   Returns a CSS color var string matching WHOOP's own palette.
+   Pass value=0 (or falsy) to get null (no color override).
+   ─────────────────────────────────────────────────────────── */
+function whoopColor(metric, value) {
+  if (!value && value !== 0) return null;
+  if (value === 0) return null;
+  switch (metric) {
+    case 'recovery':
+    case 'hrv':        // hrv treated on 0-100 scale like recovery
+      if (value >= 67) return 'var(--pos)';
+      if (value >= 34) return 'var(--warn)';
+      return 'var(--neg)';
+    case 'hr':
+      if (value <= 60) return 'var(--pos)';
+      if (value <= 75) return 'var(--warn)';
+      return 'var(--neg)';
+    case 'sleep_perf':
+      if (value >= 85) return 'var(--pos)';
+      if (value >= 70) return 'var(--warn)';
+      return 'var(--neg)';
+    default:
+      return null;
+  }
+}
 
 const inp = (full) => ({
   background: 'var(--bg-3)', border: '1px solid var(--accent)', borderRadius: 2,
@@ -61,14 +88,17 @@ function HealthPulse() {
 
       setHealth(h => ({
         ...h,
-        recovery: rec?.score?.recovery_score       ?? h.recovery,
-        hrv:      rec?.score?.hrv_rmssd_milli != null
-                    ? Math.round(rec.score.hrv_rmssd_milli)
-                    : h.hrv,
-        hr:       rec?.score?.resting_heart_rate   ?? h.hr,
-        sleep:    sleepRec?.total_in_bed_time_milli != null
-                    ? parseFloat((sleepRec.total_in_bed_time_milli / 3600000).toFixed(1))
-                    : h.sleep,
+        recovery:   rec?.score?.recovery_score       ?? h.recovery,
+        hrv:        rec?.score?.hrv_rmssd_milli != null
+                      ? Math.round(rec.score.hrv_rmssd_milli)
+                      : h.hrv,
+        hr:         rec?.score?.resting_heart_rate   ?? h.hr,
+        sleep:      sleepRec?.total_in_bed_time_milli != null
+                      ? parseFloat((sleepRec.total_in_bed_time_milli / 3600000).toFixed(1))
+                      : h.sleep,
+        sleep_perf: sleepRec?.sleep_performance_percentage != null
+                      ? Math.round(sleepRec.sleep_performance_percentage)
+                      : h.sleep_perf,
       }));
 
       setLastSync(new Date().toLocaleTimeString());
@@ -95,13 +125,14 @@ function HealthPulse() {
   /* ── edit helpers ── */
   const enterEdit = () => {
     setDrafts({
-      hr:       String(health.hr),
-      hrv:      String(health.hrv),
-      sleep:    String(health.sleep),
-      steps:    String(health.steps),
-      weight:   String(health.weight),
-      vo2:      String(health.vo2),
-      recovery: String(health.recovery),
+      hr:         String(health.hr),
+      hrv:        String(health.hrv),
+      sleep:      String(health.sleep),
+      sleep_perf: String(health.sleep_perf),
+      steps:      String(health.steps),
+      weight:     String(health.weight),
+      vo2:        String(health.vo2),
+      recovery:   String(health.recovery),
     });
     setEditMode(true);
   };
@@ -110,13 +141,14 @@ function HealthPulse() {
     const pf = (s, fb) => { const n = parseFloat(s); return isNaN(n) ? fb : n; };
     const pi = (s, fb) => { const n = parseInt(s);   return isNaN(n) ? fb : n; };
     setHealth({
-      hr:       pi(drafts.hr,       health.hr),
-      hrv:      pi(drafts.hrv,      health.hrv),
-      sleep:    pf(drafts.sleep,    health.sleep),
-      steps:    pi(drafts.steps,    health.steps),
-      weight:   pf(drafts.weight,   health.weight),
-      vo2:      pf(drafts.vo2,      health.vo2),
-      recovery: pi(drafts.recovery, health.recovery),
+      hr:         pi(drafts.hr,         health.hr),
+      hrv:        pi(drafts.hrv,        health.hrv),
+      sleep:      pf(drafts.sleep,      health.sleep),
+      sleep_perf: pi(drafts.sleep_perf, health.sleep_perf),
+      steps:      pi(drafts.steps,      health.steps),
+      weight:     pf(drafts.weight,     health.weight),
+      vo2:        pf(drafts.vo2,        health.vo2),
+      recovery:   pi(drafts.recovery,   health.recovery),
     });
     setEditMode(false);
     setDrafts(null);
@@ -148,6 +180,7 @@ function HealthPulse() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
 
         <Tri label="resting hr" value={String(h.hr)} unit="bpm"
+          color={isConnected ? whoopColor('hr', h.hr) : undefined}
           editNode={editMode &&
             <input autoFocus value={drafts.hr} onChange={upd('hr')} onKeyDown={onKey} style={inp()} />}
           trace={<Sparkline data={HR_DATA} stroke="#3DDC97" height={28} />}
@@ -155,6 +188,7 @@ function HealthPulse() {
         />
 
         <Tri label="hrv" value={String(h.hrv)} unit="ms"
+          color={isConnected ? whoopColor('hrv', h.hrv) : undefined}
           editNode={editMode &&
             <input value={drafts.hrv} onChange={upd('hrv')} onKeyDown={onKey} style={inp()} />}
           trace={<Sparkline data={[54, 58, 62, 60, 64, 66, 64]} stroke="#00D4FF" height={28} />}
@@ -170,10 +204,10 @@ function HealthPulse() {
 
       </div>
 
-      {/* ── bottom 4 mini metrics ── */}
+      {/* ── bottom 5 mini metrics ── */}
       <div style={{
         marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)',
-        display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12,
+        display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8,
       }}>
 
         <Mini label="steps" value={h.steps.toLocaleString()}
@@ -181,7 +215,7 @@ function HealthPulse() {
             <input value={drafts.steps} onChange={upd('steps')} onKeyDown={onKey} style={inp(true)} />}
         />
 
-        <Mini label="weight" value={`${h.weight} kg`}
+        <Mini label="weight" value={`${h.weight} lbs`}
           editNode={editMode &&
             <input value={drafts.weight} onChange={upd('weight')} onKeyDown={onKey} style={inp(true)} />}
         />
@@ -191,9 +225,18 @@ function HealthPulse() {
             <input value={drafts.vo2} onChange={upd('vo2')} onKeyDown={onKey} style={inp(true)} />}
         />
 
-        <Mini label="recovery" value={`${h.recovery} %`} tone="pos"
+        <Mini label="recovery"
+          value={`${h.recovery}%`}
+          color={isConnected ? whoopColor('recovery', h.recovery) : undefined}
           editNode={editMode &&
             <input value={drafts.recovery} onChange={upd('recovery')} onKeyDown={onKey} style={inp(true)} />}
+        />
+
+        <Mini label="sleep perf"
+          value={h.sleep_perf ? `${h.sleep_perf}%` : '—'}
+          color={isConnected ? whoopColor('sleep_perf', h.sleep_perf) : undefined}
+          editNode={editMode &&
+            <input value={drafts.sleep_perf} onChange={upd('sleep_perf')} onKeyDown={onKey} style={inp(true)} />}
         />
 
       </div>
@@ -289,26 +332,28 @@ function HealthPulse() {
 
 /* ── sub-components ── */
 
-function Tri({ label, value, unit, trace, delta, editNode }) {
+function Tri({ label, value, unit, trace, delta, editNode, color }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span className="label-micro">{label}</span>
-      {editNode || <Kpi value={value} unit={unit} size="md" />}
+      {editNode || <Kpi value={value} unit={unit} size="md" color={color} />}
       <div style={{ marginTop: 2 }}>{trace}</div>
       <div>{delta}</div>
     </div>
   );
 }
 
-function Mini({ label, value, tone, editNode }) {
-  const colors = { pos: 'var(--pos)', neg: 'var(--neg)' };
+function Mini({ label, value, tone, color, editNode }) {
+  /* color prop (CSS string) takes precedence over legacy tone shorthand */
+  const textColor = color
+    || (tone === 'pos' ? 'var(--pos)' : tone === 'neg' ? 'var(--neg)' : 'var(--fg-1)');
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <span className="label-micro" style={{ color: 'var(--fg-3)' }}>{label}</span>
       {editNode || (
         <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 500,
-          color: tone ? colors[tone] : 'var(--fg-1)', fontVariantNumeric: 'tabular-nums',
+          fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500,
+          color: textColor, fontVariantNumeric: 'tabular-nums',
         }}>{value}</span>
       )}
     </div>

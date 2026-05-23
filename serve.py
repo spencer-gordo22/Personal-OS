@@ -62,6 +62,10 @@ TG_FILE_BASE = f'https://api.telegram.org/file/bot{TG_TOKEN}'
 HEVY_KEY      = os.environ.get('HEVY_KEY', '').strip()
 HEVY_API_BASE = 'https://api.hevyapp.com/v1'
 
+VAPID_PUBLIC_KEY  = os.environ.get('VAPID_PUBLIC_KEY',  '').strip()
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '').strip()
+VAPID_SUBJECT     = os.environ.get('VAPID_SUBJECT',     'mailto:admin@spencer-os.fly.dev').strip()
+
 PLAID_CLIENT_ID = os.environ.get('PLAID_CLIENT_ID', '').strip()
 PLAID_SECRET    = os.environ.get('PLAID_SECRET',    '').strip()
 PLAID_ENV       = os.environ.get('PLAID_ENV', 'sandbox').strip()
@@ -88,6 +92,131 @@ _WHOOP_STATES_LOCK        = threading.Lock()
 _WHOOP_STATE_TTL:   float = 600.0   # 10 minutes
 
 DEFAULT_SYMBOLS = ['QQQ', 'GLD', 'VOO', 'ETN']
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Web Push helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _vapid_private_pem() -> str:
+    """Convert base64url DER PKCS8 private key → PEM string for pywebpush."""
+    import base64 as b64
+    padded  = VAPID_PRIVATE_KEY + '=' * (-len(VAPID_PRIVATE_KEY) % 4)
+    der     = b64.urlsafe_b64decode(padded)
+    b64_der = b64.b64encode(der).decode()
+    lines   = '\n'.join(b64_der[i:i + 64] for i in range(0, len(b64_der), 64))
+    return f'-----BEGIN PRIVATE KEY-----\n{lines}\n-----END PRIVATE KEY-----\n'
+
+
+def _push_save_sub(sub: dict) -> tuple:
+    """Upsert a push subscription in Supabase push_subscriptions table."""
+    if not SUPA_URL or not SUPA_KEY:
+        return False, 'Supabase not configured'
+    endpoint = sub.get('endpoint', '').strip()
+    if not endpoint:
+        return False, 'Missing endpoint'
+    body = json.dumps({
+        'endpoint': endpoint,
+        'p256dh':   sub.get('keys', {}).get('p256dh', ''),
+        'auth':     sub.get('keys', {}).get('auth',   ''),
+    }).encode()
+    req = urllib.request.Request(
+        f'{SUPA_URL}/rest/v1/push_subscriptions', data=body, method='POST',
+        headers={
+            'apikey':        SUPA_KEY,
+            'Authorization': f'Bearer {SUPA_KEY}',
+            'Content-Type':  'application/json',
+            'Prefer':        'resolution=merge-duplicates,return=minimal',
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return (True, '') if r.status in (200, 201, 204) else (False, f'HTTP {r.status}')
+    except urllib.request.HTTPError as e:
+        raw = ''
+        try: raw = e.read().decode()[:300]
+        except Exception: pass
+        return False, f'HTTP {e.code}: {raw}'
+    except Exception as e:
+        return False, str(e)
+
+
+def _push_get_subs() -> list:
+    """Return all push subscriptions from Supabase."""
+    if not SUPA_URL or not SUPA_KEY:
+        return []
+    req = urllib.request.Request(
+        f'{SUPA_URL}/rest/v1/push_subscriptions?select=endpoint,p256dh,auth',
+        headers={
+            'apikey':        SUPA_KEY,
+            'Authorization': f'Bearer {SUPA_KEY}',
+            'Accept':        'application/json',
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        print(f'[push] fetch subs error: {e}')
+        return []
+
+
+def _push_send_all(title: str, body_text: str, url: str = '/') -> None:
+    """Send a Web Push notification to every subscriber. Runs in background thread."""
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+        print('[push] VAPID keys not configured — skipping')
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        print('[push] pywebpush not installed — skipping')
+        return
+
+    subs = _push_get_subs()
+    if not subs:
+        print('[push] no subscribers')
+        return
+
+    pem     = _vapid_private_pem()
+    payload = json.dumps({'title': title, 'body': body_text, 'url': url})
+    ok_n = err_n = 0
+
+    for sub in subs:
+        parsed = urlparse(sub['endpoint'])
+        aud    = f'{parsed.scheme}://{parsed.netloc}'
+        sub_info = {
+            'endpoint': sub['endpoint'],
+            'keys':     {'p256dh': sub['p256dh'], 'auth': sub['auth']},
+        }
+        try:
+            webpush(
+                subscription_info=sub_info,
+                data=payload,
+                vapid_private_key=pem,
+                vapid_claims={'sub': VAPID_SUBJECT, 'aud': aud},
+            )
+            ok_n += 1
+        except Exception as e:
+            print(f'[push] send error: {e}')
+            err_n += 1
+
+    print(f'[push] sent {ok_n} ok / {err_n} errors')
+
+
+def _start_daily_push_scheduler() -> None:
+    """Background thread: fire a daily push at 8:00 am local time."""
+    def _loop():
+        while True:
+            now   = datetime.datetime.now()
+            next8 = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if next8 <= now:
+                next8 += datetime.timedelta(days=1)
+            secs = (next8 - now).total_seconds()
+            print(f'[push scheduler] next 8am push in {secs / 3600:.1f}h')
+            time.sleep(secs)
+            _push_send_all(
+                title='Spencer OS · Good morning ☀️',
+                body_text='Daily check-in reminder — log your metrics and review your tasks.',
+                url='/',
+            )
+    threading.Thread(target=_loop, daemon=True, name='push-scheduler').start()
 
 UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
@@ -361,6 +490,14 @@ def _handle_tg_update(update: dict) -> None:
             if item.get('contact_name'): reply += f"\nContact: {item['contact_name']}"
             if item.get('tags'):         reply += '\nTags: ' + '  '.join(f'`{t}`' for t in item['tags'])
             _tg_send(chat_id, reply)
+            # Push notification for tasks and reminders
+            if item.get('type') in ('task', 'reminder', 'follow_up'):
+                push_title = f"{EMOJI.get(item['type'], '✅')} {item.get('title', 'New item')}"
+                push_body  = item.get('body', '')[:120]
+                threading.Thread(
+                    target=_push_send_all, args=(push_title, push_body, '/'),
+                    daemon=True
+                ).start()
         else:
             # Send the actual error so you don't have to check server logs
             _tg_send(chat_id, f'❌ *Supabase write failed*\n`{err[:400]}`')
@@ -403,6 +540,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/api/plaid/config'):      self._plaid_config()
         elif p.startswith('/api/plaid/balance'):     self._plaid_balance()
         elif p.startswith('/api/plaid/transactions'):self._plaid_transactions()
+        elif p.startswith('/api/push/vapid-key'):    self._push_vapid_key()
         elif p.startswith('/whoop/auth'):            self._whoop_auth()
         elif p.startswith('/whoop/callback'):        self._whoop_callback()
         elif p.startswith('/whoop/data'):            self._whoop_data()
@@ -414,6 +552,8 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         if   p.startswith('/whoop/token'):              self._whoop_token_exchange()
         elif p.startswith('/api/plaid/link-token'):     self._plaid_link_token()
         elif p.startswith('/api/plaid/exchange-token'): self._plaid_exchange_token()
+        elif p.startswith('/api/push/subscribe'):       self._push_subscribe()
+        elif p.startswith('/api/push/send'):            self._push_send()
         elif p.startswith('/telegram/webhook'):         self._telegram_webhook()
         else:                                           self.send_error(404)
 
@@ -732,6 +872,36 @@ try{{
 
         self._json({'ok': overall_ok, 'checks': checks})
 
+    # ── Web Push ──────────────────────────────────────────────────────────────
+
+    def _push_vapid_key(self):
+        if not VAPID_PUBLIC_KEY:
+            self._json_error(503, 'VAPID keys not configured — set VAPID_PUBLIC_KEY env var')
+            return
+        self._json({'publicKey': VAPID_PUBLIC_KEY})
+
+    def _push_subscribe(self):
+        length = int(self.headers.get('Content-Length', 0))
+        try:    sub = json.loads(self.rfile.read(length))
+        except Exception: self._json_error(400, 'Invalid JSON'); return
+        ok, err = _push_save_sub(sub)
+        if ok:
+            self._json({'ok': True})
+        else:
+            self._json_error(500, err)
+
+    def _push_send(self):
+        length = int(self.headers.get('Content-Length', 0))
+        try:    payload = json.loads(self.rfile.read(length))
+        except Exception: self._json_error(400, 'Invalid JSON'); return
+        title     = payload.get('title', 'Spencer OS')
+        body_text = payload.get('body',  '')
+        url       = payload.get('url',   '/')
+        threading.Thread(
+            target=_push_send_all, args=(title, body_text, url), daemon=True
+        ).start()
+        self._json({'ok': True, 'queued': True})
+
     def _json(self, data: dict):
         body = json.dumps(data, ensure_ascii=False, indent=2).encode()
         self.send_response(200)
@@ -897,4 +1067,9 @@ if __name__ == '__main__':
     print(f'Config      →  http://localhost:{PORT}/api/config')
     print(f'Telegram    →  python3 telegram_poll.py  (local polling)')
     print(f'             or set-webhook: http://localhost:{PORT}/telegram/set-webhook?url=<https-url>')
+    if VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY:
+        print(f'Push        →  VAPID configured  ·  daily 8am push enabled')
+        _start_daily_push_scheduler()
+    else:
+        print(f'Push        →  VAPID keys not set — push notifications disabled')
     ThreadingHTTPServer(('', PORT), NoCacheHandler).serve_forever()

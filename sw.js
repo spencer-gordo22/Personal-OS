@@ -6,28 +6,28 @@
      • Everything else → network-first, fall back to cache
    ============================================================ */
 
-const CACHE_NAME   = 'spencer-os-v28';
+const CACHE_NAME   = 'spencer-os-v29';
 const STATIC_URLS  = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/colors_and_type.css?v=27',
-  '/db.js?v=27',
-  '/ui.jsx?v=27',
-  '/Sidebar.jsx?v=27',
-  '/TopBar.jsx?v=27',
-  '/App.jsx?v=27',
-  '/modules/Cash.jsx?v=27',
-  '/modules/Investments.jsx?v=27',
-  '/modules/HealthPulse.jsx?v=27',
-  '/modules/Workouts.jsx?v=27',
-  '/modules/DailyChecklist.jsx?v=27',
-  '/modules/CRM.jsx?v=27',
-  '/modules/Calendar.jsx?v=27',
-  '/modules/Journal.jsx?v=27',
-  '/modules/Goals.jsx?v=27',
-  '/modules/SAT.jsx?v=27',
-  '/modules/CommandPalette.jsx?v=27',
+  '/colors_and_type.css?v=29',
+  '/db.js?v=29',
+  '/ui.jsx?v=29',
+  '/Sidebar.jsx?v=29',
+  '/TopBar.jsx?v=29',
+  '/App.jsx?v=29',
+  '/modules/Cash.jsx?v=29',
+  '/modules/Investments.jsx?v=29',
+  '/modules/HealthPulse.jsx?v=29',
+  '/modules/Workouts.jsx?v=29',
+  '/modules/DailyChecklist.jsx?v=29',
+  '/modules/CRM.jsx?v=29',
+  '/modules/Calendar.jsx?v=29',
+  '/modules/Journal.jsx?v=29',
+  '/modules/Goals.jsx?v=29',
+  '/modules/SAT.jsx?v=29',
+  '/modules/CommandPalette.jsx?v=29',
   '/assets/logo-mark.svg',
   '/assets/logo-wordmark.svg',
 ];
@@ -97,5 +97,41 @@ self.addEventListener('fetch', (event) => {
       }
       return response;
     }).catch(() => caches.match(event.request))
+  );
+});
+
+/* ── push: show notification ── */
+self.addEventListener('push', (event) => {
+  let data = { title: 'Spencer OS', body: '', url: '/' };
+  try {
+    if (event.data) data = { ...data, ...JSON.parse(event.data.text()) };
+  } catch (_) {}
+
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body:     data.body,
+      icon:     '/assets/logo-mark.svg',
+      badge:    '/assets/logo-mark.svg',
+      tag:      'spencer-os-push',
+      renotify: true,
+      data:     { url: data.url },
+    })
+  );
+});
+
+/* ── notificationclick: focus or open the app ── */
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || '/';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const c of list) {
+        if (c.url.includes(self.location.origin) && 'focus' in c) {
+          c.navigate(target);
+          return c.focus();
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(target);
+    })
   );
 });
