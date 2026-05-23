@@ -1,5 +1,17 @@
 /* global React, Card, Kpi, Delta, Sparkline, ProgressBar, Icon, useLocalStorage */
-const { useState: useStateCash } = React;
+const { useState: useStateCash, useEffect: useEffectCash } = React;
+
+function loadPlaid() {
+  return new Promise((resolve, reject) => {
+    if (window.Plaid) { resolve(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+    s.async = true;
+    s.onload  = resolve;
+    s.onerror = () => reject(new Error('Could not load Plaid Link SDK'));
+    document.head.appendChild(s);
+  });
+}
 
 const CASH_TREND = [3.8, 3.2, 4.1, 5.6, 5.2, 4.8, 5.4, 6.1, 6.8, 6.2, 6.4, 7.1, 7.4, 7.0, 7.8];
 
@@ -76,6 +88,13 @@ function Cash() {
   const [budget, setBudget]           = useLocalStorage('sos_budget_v2',      INITIAL_BUDGET);
   const [transactions, setTx]         = useLocalStorage('sos_transactions',   []);
   const [subscriptions, setSubs]      = useLocalStorage('sos_subscriptions',  []);
+  const [plaidToken,  setPlaidToken]  = useLocalStorage('sos_plaid_token',    null);
+
+  /* ── Plaid state ── */
+  const [plaidStatus,   setPlaidStatus]   = useStateCash('idle'); // idle|connecting|live|error
+  const [plaidError,    setPlaidError]    = useStateCash('');
+  const [showPlaidInfo, setShowPlaidInfo] = useStateCash(false);
+  const [lastPlaidSync, setLastPlaidSync] = useStateCash('');
 
   /* ── balance edit ── */
   const [editBal, setEditBal]         = useStateCash(false);
@@ -101,7 +120,90 @@ function Cash() {
 
   const balance = cashData.balance ?? 0;
 
-  /* balance */
+  /* ── Plaid helpers ── */
+  async function fetchPlaidBalance(token) {
+    try {
+      const r = await fetch(`/api/plaid/balance?access_token=${encodeURIComponent(token)}`);
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error_message || e.error || `HTTP ${r.status}`); }
+      const data = await r.json();
+      const acct = (data.accounts || []).find(a => a.type === 'depository') || data.accounts?.[0];
+      if (acct?.balances?.current != null) {
+        setCashData(s => ({ ...s, balance: Math.round(acct.balances.current) }));
+      }
+    } catch (e) {
+      setPlaidError(e.message);
+    }
+  }
+
+  async function fetchPlaidTransactions(token) {
+    try {
+      const r = await fetch(`/api/plaid/transactions?access_token=${encodeURIComponent(token)}`);
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error_message || e.error || `HTTP ${r.status}`); }
+      const data = await r.json();
+      const txList = (data.transactions || []).slice(0, 25).map(t => ({
+        id:     t.transaction_id,
+        time:   t.date,
+        name:   t.merchant_name || t.name,
+        amount: -t.amount,  /* Plaid: positive = money out; we negate to match app convention */
+      }));
+      setTx(txList);
+    } catch (e) {
+      console.warn('[plaid tx]', e.message);
+    }
+  }
+
+  async function connectPlaid() {
+    setPlaidStatus('connecting'); setPlaidError('');
+    try {
+      /* 1. get link token */
+      const cfg = await fetch('/api/plaid/config').then(r => r.json()).catch(() => ({}));
+      if (!cfg.ready) throw new Error('Plaid not configured on server — set PLAID_CLIENT_ID + PLAID_SECRET in .env');
+      const ltRes = await fetch('/api/plaid/link-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!ltRes.ok) { const e = await ltRes.json().catch(() => ({})); throw new Error(e.error_message || e.error || `HTTP ${ltRes.status}`); }
+      const { link_token } = await ltRes.json();
+      /* 2. load Plaid Link SDK */
+      await loadPlaid();
+      /* 3. open Plaid Link */
+      const handler = window.Plaid.create({
+        token: link_token,
+        onSuccess: async (public_token) => {
+          /* 4. exchange public token for access token */
+          const exRes = await fetch('/api/plaid/exchange-token', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ public_token }),
+          });
+          if (!exRes.ok) { const e = await exRes.json().catch(() => ({})); throw new Error(e.error_message || `Exchange failed`); }
+          const { access_token } = await exRes.json();
+          setPlaidToken(access_token);
+          /* 5. fetch real data */
+          await Promise.all([fetchPlaidBalance(access_token), fetchPlaidTransactions(access_token)]);
+          setLastPlaidSync(new Date().toLocaleTimeString());
+          setPlaidStatus('live');
+        },
+        onExit: (err) => {
+          if (err) setPlaidError(err.display_message || err.error_message || 'Link closed');
+          setPlaidStatus('idle');
+        },
+      });
+      handler.open();
+    } catch (e) {
+      setPlaidError(e.message);
+      setPlaidStatus('idle');
+    }
+  }
+
+  async function refreshPlaid() {
+    if (!plaidToken) return;
+    setPlaidStatus('connecting'); setPlaidError('');
+    await Promise.all([fetchPlaidBalance(plaidToken), fetchPlaidTransactions(plaidToken)]);
+    setLastPlaidSync(new Date().toLocaleTimeString());
+    setPlaidStatus('live');
+  }
+
+  /* auto-sync on mount if token present */
+  useEffectCash(() => { if (plaidToken) refreshPlaid(); }, []); // eslint-disable-line
+
+  /* ── balance */
   const openBal   = () => { setEditBal(true); setBalVal(String(balance)); };
   const commitBal = () => {
     const n = parseFloat(balVal.replace(/[^0-9.]/g, ''));
@@ -161,17 +263,31 @@ function Cash() {
   const removeSub = (id) => setSubs(prev => prev.filter(s => s.id !== id));
 
   /* ════════════════════════════════════════ render */
+  const isPlaidConnected = Boolean(plaidToken);
+  const plaidMeta = isPlaidConnected
+    ? (plaidStatus === 'connecting' ? 'SYNCING…' : lastPlaidSync ? `synced ${lastPlaidSync}` : 'PLAID ●')
+    : 'MANUAL';
+
   return (
-    <Card icon="wallet" label="chase checking" meta="LIVE"
+    <Card icon="wallet" label="chase checking"
+      meta={<span style={{ color: isPlaidConnected ? 'var(--pos)' : 'var(--fg-3)' }}>{plaidMeta}</span>}
       action={
-        <span onClick={() => setEditMode(m => !m)} title={editMode ? 'Done editing budget' : 'Edit budget'}
-          style={{ cursor: 'pointer', color: editMode ? 'var(--accent)' : 'var(--fg-3)', display: 'flex', alignItems: 'center' }}>
-          <Icon name={editMode ? 'check' : 'pencil'} size={13} />
-        </span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {isPlaidConnected && (
+            <span onClick={refreshPlaid} title="Refresh from Plaid"
+              style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'flex', alignItems: 'center' }}>
+              <Icon name="refresh-cw" size={12} />
+            </span>
+          )}
+          <span onClick={() => setEditMode(m => !m)} title={editMode ? 'Done editing budget' : 'Edit budget'}
+            style={{ cursor: 'pointer', color: editMode ? 'var(--accent)' : 'var(--fg-3)', display: 'flex', alignItems: 'center' }}>
+            <Icon name={editMode ? 'check' : 'pencil'} size={13} />
+          </span>
+        </div>
       }>
 
       {/* ── balance ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div>
           <div className="label-micro" style={{ marginBottom: 6 }}>balance</div>
           {editBal ? (
@@ -184,13 +300,53 @@ function Cash() {
               />
             </div>
           ) : (
-            <div onClick={openBal} title="Click to update balance" style={{ cursor: 'pointer' }}>
+            <div onClick={!isPlaidConnected ? openBal : undefined}
+              title={!isPlaidConnected ? 'Click to update balance' : undefined}
+              style={{ cursor: isPlaidConnected ? 'default' : 'pointer' }}>
               <Kpi value={`$ ${balance.toLocaleString()}`} size="lg" />
             </div>
           )}
         </div>
-        <Delta value="+ $ 3,554" tone="pos">30d</Delta>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          {!isPlaidConnected ? (
+            <button
+              onClick={connectPlaid}
+              disabled={plaidStatus === 'connecting'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'var(--bg-3)', border: '1px solid var(--border-strong)',
+                borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
+                color: 'var(--fg-1)', fontFamily: 'var(--font-sans)', fontSize: 11, fontWeight: 500,
+                transition: 'border-color 120ms', whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={e => { if (plaidStatus !== 'connecting') e.currentTarget.style.borderColor = 'var(--accent)'; }}
+              onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-strong)'}
+            >
+              <Icon name="landmark" size={13} />
+              {plaidStatus === 'connecting' ? 'Connecting…' : 'Connect Bank'}
+            </button>
+          ) : (
+            <span onClick={() => { setPlaidToken(null); setPlaidStatus('idle'); setPlaidError(''); }}
+              title="Disconnect Plaid"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+              DISCONNECT
+            </span>
+          )}
+          {plaidError && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)', maxWidth: 160, textAlign: 'right' }}>
+              ⚠ {plaidError}
+            </span>
+          )}
+        </div>
       </div>
+
+      {!isPlaidConnected && (
+        <div style={{ marginTop: 4, marginBottom: 4 }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em' }}>
+            needs PLAID_CLIENT_ID + PLAID_SECRET in .env · sandbox or production
+          </span>
+        </div>
+      )}
 
       <div style={{ marginTop: 12, marginBottom: 12 }}>
         <Sparkline data={CASH_TREND} stroke="#3DDC97" fill="rgba(61,220,151,0.08)" height={36} dots />

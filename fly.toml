@@ -2,6 +2,17 @@
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
+# ── Custom Domain Setup ───────────────────────────────────────────────────────
+# 1. Buy your domain (e.g. spenceros.com) from any registrar (Namecheap, etc.)
+# 2. Run:  flyctl certs add yourdomain.com
+#          flyctl certs add www.yourdomain.com
+# 3. In your registrar's DNS settings add:
+#       CNAME  @    spencer-os.fly.dev.   (or use the A/AAAA IPs from `flyctl ips list`)
+#       CNAME  www  spencer-os.fly.dev.
+# 4. Update BASE_URL below AND run:
+#       flyctl secrets set BASE_URL="https://yourdomain.com"
+# 5. Wait 1-5 min for TLS cert provisioning — check with `flyctl certs show yourdomain.com`
+# ─────────────────────────────────────────────────────────────────────────────
 
 app = 'spencer-os'
 primary_region = 'dfw'
@@ -9,6 +20,7 @@ primary_region = 'dfw'
 [build]
 
 [env]
+  # Update BASE_URL to your custom domain after running `flyctl certs add`
   BASE_URL = 'https://spencer-os.fly.dev'
   PORT = '8080'
 

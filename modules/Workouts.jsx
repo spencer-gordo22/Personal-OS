@@ -76,8 +76,14 @@ function Workouts() {
   /* ── BJJ history ── */
   const [bjj, setBjj] = useLocalStorage('sos_bjj', {});
 
-  /* ── Hevy manual log ── */
+  /* ── Hevy API ── */
   const [hevySessions, setHevySessions] = useLocalStorage('sos_hevy_sessions', []);
+  const [hevyKey,      setHevyKey]      = useLocalStorage('sos_hevy_key',      '');
+  const [hevyStatus,   setHevyStatus]   = useStateWkt('idle');  // idle|syncing|live|error
+  const [hevyError,    setHevyError]    = useStateWkt('');
+  const [showHevyCfg,  setShowHevyCfg]  = useStateWkt(false);
+  const [hevyKeyInput, setHevyKeyInput] = useStateWkt('');
+  /* manual log */
   const [showHevy,   setShowHevy]   = useStateWkt(false);
   const [hevyDate,   setHevyDate]   = useStateWkt(todayISO);
   const [hevyType,   setHevyType]   = useStateWkt('PUSH');
@@ -112,6 +118,84 @@ function Workouts() {
 
   const toggleBjj = (iso) =>
     setBjj(b => ({ ...b, [iso]: { done: !(b[iso] && b[iso].done) } }));
+
+  /* ── Hevy sync ── */
+  function guessType(title = '', exercises = []) {
+    const t = title.toLowerCase();
+    if (/push|chest|bench|shoulder|tricep|press/.test(t)) return 'PUSH';
+    if (/pull|back|row|lat|bicep|curl|deadlift/.test(t)) return 'PULL';
+    if (/leg|squat|lunge|quad|hamstring|glute|lower/.test(t)) return 'LEGS';
+    if (/shar|arm|bicep|tricep|lateral/.test(t)) return 'SHARMS';
+    if (/rest|off|yoga|mobility|stretch/.test(t)) return 'REST';
+    /* fall back to scanning exercise names */
+    const enames = exercises.map(e => (e.title || '').toLowerCase()).join(' ');
+    if (/bench|chest|press|shoulder|tricep/.test(enames)) return 'PUSH';
+    if (/row|lat|bicep|curl|deadlift/.test(enames)) return 'PULL';
+    if (/squat|lunge|leg press|hamstring/.test(enames)) return 'LEGS';
+    return 'PUSH';
+  }
+
+  function hevyExercisesToNotes(exercises = []) {
+    return exercises.slice(0, 6).map(ex => {
+      const sets = (ex.sets || []).slice(0, 4).map(s => {
+        const reps = s.reps != null ? `${s.reps}r` : '';
+        const kg   = s.weight_kg != null ? `${s.weight_kg}kg` : '';
+        return [reps, kg].filter(Boolean).join('@');
+      }).join(', ');
+      return `${ex.title || 'Exercise'}: ${sets}`;
+    }).join('\n');
+  }
+
+  async function syncHevy() {
+    const key = (hevyKey || '').trim();
+    if (!key) { setShowHevyCfg(true); return; }
+    setHevyStatus('syncing'); setHevyError('');
+    try {
+      const r = await fetch(`/api/hevy?page=1&pageSize=20&key=${encodeURIComponent(key)}`);
+      if (!r.ok) { const err = await r.json().catch(() => ({})); throw new Error(err.error || `HTTP ${r.status}`); }
+      const data = await r.json();
+      const workoutsRaw = data.workouts || [];
+
+      /* Map to session log entries, newest first */
+      const mapped = workoutsRaw.map(w => {
+        const startDate = (w.start_time || '').slice(0, 10) || todayISO;
+        const type      = guessType(w.title, w.exercises || []);
+        const notes     = hevyExercisesToNotes(w.exercises || []);
+        return { id: `hevy_${w.id}`, date: startDate, type, notes, source: 'hevy' };
+      });
+
+      /* Merge with existing manual sessions (keep manual, replace hevy- ones) */
+      setHevySessions(prev => {
+        const manual = (prev || []).filter(s => s.source !== 'hevy');
+        return [...mapped, ...manual];
+      });
+
+      /* Auto-mark week strip days as done if Hevy has a session for that day */
+      setWorkouts(prev => {
+        const updated = { ...prev };
+        workoutsRaw.forEach(w => {
+          const d    = (w.start_time || '').slice(0, 10);
+          const type = guessType(w.title, w.exercises || []);
+          if (d && week.some(wd => wd.iso === d)) {
+            updated[d] = { ...(updated[d] || {}), type, done: true };
+          }
+        });
+        return updated;
+      });
+
+      setHevyStatus('live');
+    } catch (e) {
+      setHevyStatus('error'); setHevyError(e.message);
+    }
+  }
+
+  const saveHevyKey = () => {
+    const k = hevyKeyInput.trim();
+    if (!k) return;
+    setHevyKey(k);
+    setHevyKeyInput('');
+    setShowHevyCfg(false);
+  };
 
   const addHevySession = () => {
     if (!hevyNotes.trim() && !hevyDate) return;
@@ -214,16 +298,68 @@ function Workouts() {
         <WktStat label="bjj streak"   value={bjjStreak > 0 ? `${bjjStreak}d` : '—'} tone={bjjStreak >= 7 ? 'accent' : bjjStreak >= 3 ? 'warn' : null} />
       </div>
 
-      {/* ── Hevy manual log ── */}
+      {/* ── Hevy session log ── */}
       <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 10 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span className="label-micro" style={{ color: 'var(--fg-4)' }}>session log · hevy</span>
-          <span
-            onClick={() => setShowHevy(s => !s)}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: showHevy ? 'var(--accent)' : 'var(--fg-3)', cursor: 'pointer', letterSpacing: '0.06em' }}>
-            {showHevy ? '✕ CANCEL' : '+ ADD'}
+          <span className="label-micro" style={{ color: 'var(--fg-4)' }}>
+            session log · hevy
+            {hevyStatus === 'live'    && <span style={{ marginLeft: 5, color: 'var(--pos)' }}>● synced</span>}
+            {hevyStatus === 'syncing' && <span style={{ marginLeft: 5, color: 'var(--warn)' }}>● syncing…</span>}
+            {hevyStatus === 'error'   && <span style={{ marginLeft: 5, color: 'var(--neg)' }}>● error</span>}
           </span>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {hevyKey && (
+              <span onClick={syncHevy}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+                SYNC
+              </span>
+            )}
+            <span onClick={() => setShowHevyCfg(s => !s)}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: showHevyCfg ? 'var(--accent)' : 'var(--fg-3)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+              {showHevyCfg ? '✕' : hevyKey ? '⚙' : 'CONNECT'}
+            </span>
+            <span onClick={() => setShowHevy(s => !s)}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: showHevy ? 'var(--accent)' : 'var(--fg-3)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+              {showHevy ? '✕' : '+ MANUAL'}
+            </span>
+          </div>
         </div>
+
+        {/* Hevy API key config */}
+        {showHevyCfg && (
+          <div style={{ marginBottom: 8, padding: 8, background: 'var(--bg-1)', borderRadius: 4, border: '1px solid var(--border)' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', lineHeight: 1.6, marginBottom: 6 }}>
+              1. Open <span style={{ color: 'var(--accent)' }}>hevy.app</span> → Settings → API<br/>
+              2. Generate an API key and paste it below
+            </div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input autoFocus value={hevyKeyInput} onChange={e => setHevyKeyInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveHevyKey(); if (e.key === 'Escape') setShowHevyCfg(false); }}
+                placeholder="hevy api key"
+                style={{ flex: 1, background: 'var(--bg-3)', border: '1px solid var(--border-strong)', borderRadius: 2, padding: '3px 7px', color: 'var(--fg-1)', fontFamily: 'var(--font-mono)', fontSize: 10, outline: 'none' }}
+              />
+              <span onClick={saveHevyKey}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+                SAVE
+              </span>
+            </div>
+            {hevyKey && (
+              <div style={{ marginTop: 5, display: 'flex', gap: 10 }}>
+                <span onClick={syncHevy}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+                  SYNC NOW →
+                </span>
+                <span onClick={() => { setHevyKey(''); setHevyStatus('idle'); setShowHevyCfg(false); }}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+                  REMOVE KEY
+                </span>
+              </div>
+            )}
+            {hevyError && (
+              <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)' }}>⚠ {hevyError}</div>
+            )}
+          </div>
+        )}
 
         {showHevy && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8, padding: '8px', background: 'var(--bg-1)', borderRadius: 4, border: '1px solid var(--border)' }}>

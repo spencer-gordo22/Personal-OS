@@ -9,6 +9,16 @@ const SIDEBAR_ITEMS = [
   { id: 'health',    name: 'HEALTH',    icon: 'activity' },
   { id: 'goals',     name: 'GOALS',     icon: 'flag' },
   { id: 'calendar',  name: 'CALENDAR',  icon: 'calendar-days' },
+  { id: 'sat',       name: 'SAT PREP',  icon: 'graduation-cap' },
+];
+
+/* Items shown in the mobile bottom tab bar (max 5 to avoid crowding) */
+const MOBILE_TABS = [
+  { id: 'dashboard', name: 'HOME',      icon: 'layout-dashboard' },
+  { id: 'checklist', name: 'TASKS',     icon: 'list-checks' },
+  { id: 'finance',   name: 'FINANCE',   icon: 'line-chart' },
+  { id: 'health',    name: 'HEALTH',    icon: 'activity' },
+  { id: 'settings',  name: 'SETTINGS',  icon: 'settings' },
 ];
 
 function SidebarItem({ item, active, onClick }) {
@@ -53,42 +63,77 @@ function SidebarItem({ item, active, onClick }) {
 
 function Sidebar({ activeId, onSelect, onHome }) {
   return (
-    <nav style={{
-      width: 56, background: 'var(--bg-0)',
-      borderRight: '1px solid var(--border)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: '10px 0', gap: 4, flexShrink: 0,
-    }}>
-      {/* logo mark — click to return to dashboard */}
-      <div
-        onClick={onHome}
-        title="DASHBOARD"
-        style={{
-          width: 32, height: 32, borderRadius: 6,
-          background: activeId === 'dashboard' ? 'var(--bg-3)' : 'var(--bg-2)',
-          border: '1px solid ' + (activeId === 'dashboard' ? 'var(--accent)' : 'var(--border)'),
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 14,
-          color: 'var(--accent)', letterSpacing: '-0.02em',
-          marginBottom: 12, position: 'relative', flexShrink: 0,
-          cursor: 'pointer',
-          transition: 'background 120ms, border-color 120ms',
-        }}>
-        S
-        <div style={{
-          position: 'absolute', right: 3, bottom: 3,
-          width: 4, height: 4, background: 'var(--accent)', borderRadius: '50%',
-          boxShadow: '0 0 6px var(--accent)',
-        }} />
-      </div>
+    <>
+      {/* ── Desktop sidebar ────────────────────── */}
+      <nav className="sos-sidebar" style={{
+        width: 56, background: 'var(--bg-0)',
+        borderRight: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        padding: '10px 0', gap: 4, flexShrink: 0,
+      }}>
+        {/* logo mark */}
+        <div
+          onClick={onHome}
+          title="DASHBOARD"
+          style={{
+            width: 32, height: 32, borderRadius: 6,
+            background: activeId === 'dashboard' ? 'var(--bg-3)' : 'var(--bg-2)',
+            border: '1px solid ' + (activeId === 'dashboard' ? 'var(--accent)' : 'var(--border)'),
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 14,
+            color: 'var(--accent)', letterSpacing: '-0.02em',
+            marginBottom: 12, position: 'relative', flexShrink: 0,
+            cursor: 'pointer',
+            transition: 'background 120ms, border-color 120ms',
+          }}>
+          S
+          <div style={{
+            position: 'absolute', right: 3, bottom: 3,
+            width: 4, height: 4, background: 'var(--accent)', borderRadius: '50%',
+            boxShadow: '0 0 6px var(--accent)',
+          }} />
+        </div>
 
-      {SIDEBAR_ITEMS.map(it => (
-        <SidebarItem key={it.id} item={it} active={it.id === activeId} onClick={() => onSelect(it.id)} />
-      ))}
+        {SIDEBAR_ITEMS.map(it => (
+          <SidebarItem key={it.id} item={it} active={it.id === activeId} onClick={() => onSelect(it.id)} />
+        ))}
 
-      <div style={{ flex: 1 }} />
-      <SidebarItem item={{ id: 'settings', name: 'SETTINGS', icon: 'settings' }} onClick={() => {}} />
-    </nav>
+        <div style={{ flex: 1 }} />
+        <SidebarItem
+          item={{ id: 'settings', name: 'SETTINGS', icon: 'settings' }}
+          active={activeId === 'settings'}
+          onClick={() => onSelect('settings')}
+        />
+      </nav>
+
+      {/* ── Mobile bottom tab bar ───────────────── */}
+      <nav className="sos-bottom-nav">
+        {MOBILE_TABS.map(tab => {
+          const isActive = activeId === tab.id;
+          return (
+            <div
+              key={tab.id}
+              onClick={() => tab.id === 'dashboard' ? onHome() : onSelect(tab.id)}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', gap: 3, flex: 1,
+                padding: '6px 0', cursor: 'pointer',
+                color: isActive ? 'var(--accent)' : 'var(--fg-3)',
+                transition: 'color 120ms',
+              }}>
+              <Icon name={tab.icon} size={20} />
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 8,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+                lineHeight: 1,
+              }}>
+                {tab.name}
+              </span>
+            </div>
+          );
+        })}
+      </nav>
+    </>
   );
 }
 

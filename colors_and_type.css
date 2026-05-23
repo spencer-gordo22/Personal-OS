@@ -318,3 +318,82 @@ html, body {
 .hr   { height: 1px; background: var(--border); border: 0; margin: 0; }
 .hr-v { width: 1px;  background: var(--border); align-self: stretch; }
 .tabular { font-variant-numeric: tabular-nums slashed-zero; }
+
+/* ============================================================
+   Mobile Responsive  (≤ 768px)
+   ============================================================ */
+
+/* Bottom tab bar — hidden on desktop, visible on mobile */
+.sos-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 768px) {
+
+  /* Sidebar hidden on mobile */
+  .sos-sidebar {
+    display: none !important;
+  }
+
+  /* Bottom navigation bar */
+  .sos-bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 58px;
+    background: var(--bg-0);
+    border-top: 1px solid var(--border);
+    z-index: 500;
+    align-items: center;
+    justify-content: space-around;
+    padding: 0 4px;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  /* Main content gets bottom padding so cards aren't hidden behind tab bar */
+  .sos-main {
+    padding-bottom: 68px !important;
+  }
+
+  /* Dashboard 12-col grid → single column */
+  .sos-dashboard-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .sos-dashboard-grid > div {
+    grid-column: span 1 !important;
+  }
+
+  /* Module views become full width */
+  .sos-module-view > div {
+    grid-template-columns: 1fr !important;
+  }
+  .sos-module-view > div > div {
+    grid-column: span 1 !important;
+  }
+
+  /* Page heading font size */
+  .sos-page-title {
+    font-size: 20px !important;
+  }
+
+  /* Tables and week strips — horizontal scroll instead of overflow */
+  .sos-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Topbar text adjustments */
+  .sos-topbar-cmd {
+    display: none !important;
+  }
+}
+
+/* Desktop: ensure bottom nav never shows */
+@media (min-width: 769px) {
+  .sos-bottom-nav {
+    display: none !important;
+  }
+  .sos-sidebar {
+    display: flex !important;
+  }
+}

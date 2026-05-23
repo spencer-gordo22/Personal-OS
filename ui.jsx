@@ -191,4 +191,18 @@ function useLocalStorage(key, initial) {
   return [val, set];
 }
 
-Object.assign(window, { Icon, Card, Pill, Kpi, Delta, Sparkline, Bars, ProgressBar, SectionLbl, toISO, useLocalStorage });
+/* ── useIsMobile — returns true on screens ≤ 768px, reactive ── */
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth <= 768
+  );
+  useEffect(() => {
+    const mq      = window.matchMedia('(max-width: 768px)');
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
+Object.assign(window, { Icon, Card, Pill, Kpi, Delta, Sparkline, Bars, ProgressBar, SectionLbl, toISO, useLocalStorage, useIsMobile });

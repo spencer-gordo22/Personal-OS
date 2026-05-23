@@ -49,7 +49,7 @@ function HealthPulse() {
     try {
       const [recRes, sleepRes] = await Promise.all([
         fetch(`/whoop/data?endpoint=recovery&token=${encodeURIComponent(token)}`),
-        fetch(`/whoop/data?endpoint=sleep&token=${encodeURIComponent(token)}`),
+        fetch(`/whoop/data?endpoint=activity/sleep&token=${encodeURIComponent(token)}`),
       ]);
       if (!recRes.ok || !sleepRes.ok) throw new Error(`HTTP ${recRes.status}/${sleepRes.status}`);
       const recJson   = await recRes.json();

@@ -58,6 +58,18 @@ OPENAI_KEY = os.environ.get('OPENAI_KEY', '').strip()
 TG_API_BASE  = f'https://api.telegram.org/bot{TG_TOKEN}'
 TG_FILE_BASE = f'https://api.telegram.org/file/bot{TG_TOKEN}'
 
+HEVY_KEY      = os.environ.get('HEVY_KEY', '').strip()
+HEVY_API_BASE = 'https://api.hevyapp.com/v1'
+
+PLAID_CLIENT_ID = os.environ.get('PLAID_CLIENT_ID', '').strip()
+PLAID_SECRET    = os.environ.get('PLAID_SECRET',    '').strip()
+PLAID_ENV       = os.environ.get('PLAID_ENV', 'sandbox').strip()
+PLAID_API_BASE  = {
+    'sandbox':     'https://sandbox.plaid.com',
+    'development': 'https://development.plaid.com',
+    'production':  'https://production.plaid.com',
+}.get(PLAID_ENV, 'https://sandbox.plaid.com')
+
 WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
@@ -286,8 +298,12 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         p = self.path
-        if   p.startswith('/api/quotes'):           self._proxy_quotes()
+        if   p.startswith('/api/quotes'):            self._proxy_quotes()
         elif p.startswith('/api/config'):            self._api_config()
+        elif p.startswith('/api/hevy'):              self._hevy_proxy()
+        elif p.startswith('/api/plaid/config'):      self._plaid_config()
+        elif p.startswith('/api/plaid/balance'):     self._plaid_balance()
+        elif p.startswith('/api/plaid/transactions'):self._plaid_transactions()
         elif p.startswith('/whoop/auth'):            self._whoop_auth()
         elif p.startswith('/whoop/callback'):        self._whoop_callback()
         elif p.startswith('/whoop/data'):            self._whoop_data()
@@ -296,9 +312,11 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         p = self.path
-        if   p.startswith('/whoop/token'):           self._whoop_token_exchange()
-        elif p.startswith('/telegram/webhook'):      self._telegram_webhook()
-        else:                                        self.send_error(404)
+        if   p.startswith('/whoop/token'):              self._whoop_token_exchange()
+        elif p.startswith('/api/plaid/link-token'):     self._plaid_link_token()
+        elif p.startswith('/api/plaid/exchange-token'): self._plaid_exchange_token()
+        elif p.startswith('/telegram/webhook'):         self._telegram_webhook()
+        else:                                           self.send_error(404)
 
     # ── /api/config ───────────────────────────────────────────────────────────
 
@@ -364,8 +382,10 @@ display:flex;flex-direction:column;align-items:center;justify-content:center;hei
 <script>(async()=>{{const code={json.dumps(code)};const err={json.dumps(err)};
 if(err){{document.getElementById('err').textContent='WHOOP: '+err;return;}}
 if(!code){{document.getElementById('err').textContent='No code.';return;}}
-const cid=localStorage.getItem('sos_whoop_client_id')||'';
-const sec=localStorage.getItem('sos_whoop_client_secret')||'';
+/* useLocalStorage stores values as JSON.stringify(value), so we must JSON.parse */
+let cid='',sec='';
+try{{cid=JSON.parse(localStorage.getItem('sos_whoop_client_id')||'""');}}catch{{cid=localStorage.getItem('sos_whoop_client_id')||'';}}
+try{{sec=JSON.parse(localStorage.getItem('sos_whoop_client_secret')||'""');}}catch{{sec=localStorage.getItem('sos_whoop_client_secret')||'';}}
 if(!cid||!sec){{document.getElementById('err').textContent='Missing creds in localStorage.';return;}}
 try{{const r=await fetch('/whoop/token',{{method:'POST',headers:{{'Content-Type':'application/json'}},
 body:JSON.stringify({{code,client_id:cid,client_secret:sec}})}});
@@ -458,6 +478,144 @@ document.getElementById('err').textContent='Token exchange: '+e.message;}}}})()<
             threading.Thread(target=_handle_tg_update, args=(update,), daemon=True).start()
         except Exception as e:
             print(f'[telegram webhook] {e}')
+
+    # ── Hevy proxy ────────────────────────────────────────────────────────────
+
+    def _hevy_proxy(self):
+        qs       = parse_qs(urlparse(self.path).query)
+        key      = qs.get('key',      [HEVY_KEY])[0].strip()
+        page     = qs.get('page',     ['1'])[0]
+        pageSize = qs.get('pageSize', ['10'])[0]
+        if not key:
+            self._json_error(401, 'No Hevy API key — pass ?key=YOUR_KEY or set HEVY_KEY env var')
+            return
+        url = f'{HEVY_API_BASE}/workouts?page={page}&pageSize={pageSize}'
+        req = urllib.request.Request(url, headers={
+            'api-key': key, 'User-Agent': UA, 'Accept': 'application/json',
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                body = r.read()
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode()); return
+        except Exception as e:
+            self._json_error(502, str(e)); return
+        self.send_response(200)
+        self.send_header('Content-Type',   'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # ── Plaid ─────────────────────────────────────────────────────────────────
+
+    def _plaid_post(self, path: str, data: dict) -> bytes:
+        payload = {**data, 'client_id': PLAID_CLIENT_ID, 'secret': PLAID_SECRET}
+        body    = json.dumps(payload).encode()
+        req     = urllib.request.Request(f'{PLAID_API_BASE}{path}', data=body,
+                      headers={'Content-Type': 'application/json', 'User-Agent': UA})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read()
+
+    def _plaid_config(self):
+        body = json.dumps({
+            'env':   PLAID_ENV,
+            'ready': bool(PLAID_CLIENT_ID and PLAID_SECRET),
+        }).encode()
+        self.send_response(200)
+        self.send_header('Content-Type',   'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _plaid_link_token(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured — set PLAID_CLIENT_ID + PLAID_SECRET'); return
+        try:
+            body = self._plaid_post('/link/token/create', {
+                'user':          {'client_user_id': 'spencer'},
+                'client_name':   'Spencer OS',
+                'products':      ['transactions'],
+                'country_codes': ['US'],
+                'language':      'en',
+            })
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode())
+        except Exception as e:
+            self._json_error(502, str(e))
+
+    def _plaid_exchange_token(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured'); return
+        length = int(self.headers.get('Content-Length', 0))
+        try:    payload = json.loads(self.rfile.read(length))
+        except: self._json_error(400, 'Invalid JSON'); return
+        public_token = payload.get('public_token', '')
+        if not public_token:
+            self._json_error(400, 'Missing public_token'); return
+        try:
+            body = self._plaid_post('/item/public_token/exchange',
+                                    {'public_token': public_token})
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode())
+        except Exception as e:
+            self._json_error(502, str(e))
+
+    def _plaid_balance(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured'); return
+        qs           = parse_qs(urlparse(self.path).query)
+        access_token = qs.get('access_token', [''])[0].strip()
+        if not access_token:
+            self._json_error(400, 'Missing access_token'); return
+        try:
+            body = self._plaid_post('/accounts/balance/get',
+                                    {'access_token': access_token})
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode())
+        except Exception as e:
+            self._json_error(502, str(e))
+
+    def _plaid_transactions(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured'); return
+        qs           = parse_qs(urlparse(self.path).query)
+        access_token = qs.get('access_token', [''])[0].strip()
+        if not access_token:
+            self._json_error(400, 'Missing access_token'); return
+        today = datetime.date.today()
+        start = (today - datetime.timedelta(days=30)).isoformat()
+        end   = today.isoformat()
+        try:
+            body = self._plaid_post('/transactions/get', {
+                'access_token': access_token,
+                'start_date':   start,
+                'end_date':     end,
+                'count':        50,
+            })
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode())
+        except Exception as e:
+            self._json_error(502, str(e))
 
     # ── helper ───────────────────────────────────────────────────────────────
 

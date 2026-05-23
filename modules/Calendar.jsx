@@ -154,6 +154,10 @@ function Calendar() {
   /* ── OAuth connect ─────────────────────────── */
   async function connect() {
     const id = effectiveId;
+    const origin = window.location.origin;
+    console.log('[Calendar] OAuth connect — client_id:', id);
+    console.log('[Calendar] OAuth connect — window.location.origin:', origin);
+    console.log('[Calendar] This origin MUST be listed in Authorized JavaScript origins for the above Client ID in Google Cloud Console.');
     if (!id) { setShowSetup(true); return; }
     setStatus('connecting');
     setErrMsg('');
@@ -267,13 +271,34 @@ function Calendar() {
               }}>
                 GOOGLE CALENDAR SETUP
               </div>
+              {/* current origin info box */}
+              <div style={{
+                marginBottom: 10, padding: '7px 10px',
+                background: 'rgba(0,212,255,0.07)', border: '1px solid rgba(0,212,255,0.25)',
+                borderRadius: 3,
+              }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.1em', marginBottom: 3 }}>
+                  CURRENT ORIGIN (add this to Google Cloud)
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', wordBreak: 'break-all' }}>
+                  {window.location.origin}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.1em', marginTop: 8, marginBottom: 3 }}>
+                  CURRENT CLIENT ID
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-2)', wordBreak: 'break-all' }}>
+                  {effectiveId}
+                </div>
+              </div>
+
               <ol style={{ margin: '0 0 12px', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {[
-                  <>Go to <span style={{ color: 'var(--accent)' }}>console.cloud.google.com</span> → New Project</>,
+                  <>Go to <span style={{ color: 'var(--accent)' }}>console.cloud.google.com</span> → your project</>,
                   <>APIs & Services → Library → enable <strong>Google Calendar API</strong></>,
-                  <>Credentials → Create OAuth 2.0 Client ID → type: <strong>Web Application</strong></>,
-                  <>Authorized JavaScript origins: <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--warn)', fontSize: 10 }}>http://localhost:8765</span></>,
-                  <>Copy the Client ID and paste it below</>,
+                  <>Credentials → your OAuth 2.0 Client ID → Edit</>,
+                  <>Under <strong>Authorized JavaScript origins</strong> add the origin shown above</>,
+                  <>Save, wait ~5 min for Google to propagate, then connect</>,
+                  <>If using a new Client ID, paste it below and hit SAVE</>,
                 ].map((step, i) => (
                   <li key={i} style={{
                     fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)',
@@ -340,7 +365,7 @@ function Calendar() {
                 fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)',
                 cursor: 'pointer', letterSpacing: '0.06em', textTransform: 'uppercase',
               }}>
-              {showSetup ? 'HIDE' : `ID: ${effectiveId.slice(0, 16)}…`}
+              {showSetup ? 'HIDE SETUP' : 'SETUP / CHANGE CLIENT ID'}
             </span>
           </div>
 
