@@ -101,6 +101,7 @@ function Calendar() {
   /* ── transient state ── */
   const [status,    setStatus]    = useStateCal('idle');   // idle|connecting|loading|live|error
   const [errMsg,    setErrMsg]    = useStateCal('');
+  /* idInput is pre-filled from the saved clientId on mount */
   const [idInput,   setIdInput]   = useStateCal('');
   const [showSteps, setShowSteps] = useStateCal(false);
   const [supaReady, setSupaReady] = useStateCal(false);
@@ -115,6 +116,13 @@ function Calendar() {
       .then(() => setSupaReady(true))
       .catch(() => setSupaReady(true)); // still allow connect even if Supabase fails
   }, []);
+
+  /* ── pre-fill idInput from saved clientId ── */
+  /* Run when clientId is first hydrated from localStorage/Supabase */
+  useEffectCal(() => {
+    const saved = (clientId || GCAL_DEFAULT_ID).trim();
+    setIdInput(saved);
+  }, [clientId]); // re-runs if clientId changes (e.g. hydrated from Supabase)
 
   /* ── fetch events ──────────────────────────── */
   async function fetchEvents(accessToken) {
@@ -180,10 +188,23 @@ function Calendar() {
         scope: GCAL_SCOPE,
         callback: (resp) => {
           if (resp.error) {
-            const msg =
-              resp.error === 'popup_closed_by_user' ? 'Popup closed — try again' :
-              resp.error === 'access_denied'         ? 'Access denied' :
-              resp.error_description || resp.error;
+            console.error('[Calendar] OAuth error response:', resp);
+            let msg;
+            if (resp.error === 'popup_closed_by_user') {
+              msg = 'Popup closed — try again';
+            } else if (resp.error === 'access_denied') {
+              msg = 'Access denied — check your Google account has Calendar access';
+            } else if (resp.error === 'invalid_client') {
+              msg =
+                `invalid_client — check two things in Google Cloud Console:\n` +
+                `1. The Client ID above matches your OAuth 2.0 credential exactly\n` +
+                `2. "${window.location.origin}" is listed under Authorized JavaScript origins\n` +
+                `(raw: ${resp.error_description || resp.error})`;
+            } else {
+              msg = resp.error_description
+                ? `${resp.error}: ${resp.error_description}`
+                : resp.error;
+            }
             setErrMsg(msg);
             setStatus('idle');
             return;
@@ -214,9 +235,10 @@ function Calendar() {
     const id = idInput.trim();
     if (!id) return;
     setClientId(id);
-    setIdInput('');
+    /* DO NOT blank idInput — keep showing what was just saved */
     setIdSaved(true);
     setTimeout(() => setIdSaved(false), 2000);
+    console.log('[Calendar] Client ID saved:', id);
   }
 
   /* ── build all origins to show (current + required, deduped) ── */
@@ -421,9 +443,10 @@ function Calendar() {
 
           {errMsg && (
             <div style={{
-              marginTop: 4, padding: '5px 8px',
+              marginTop: 4, padding: '8px 10px',
               background: 'rgba(255,77,109,0.1)', border: '1px solid rgba(255,77,109,0.35)',
-              borderRadius: 3, color: 'var(--neg)', fontFamily: 'var(--font-mono)', fontSize: 11,
+              borderRadius: 3, color: 'var(--neg)', fontFamily: 'var(--font-mono)', fontSize: 10,
+              whiteSpace: 'pre-wrap', lineHeight: 1.6,
             }}>
               ⚠ {errMsg}
             </div>

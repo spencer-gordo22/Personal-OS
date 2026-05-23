@@ -24,11 +24,13 @@ function SAT() {
   const [testDate, setTestDate] = useLocalStorage('sos_sat_test_date', SAT_DEFAULT_DATE);
 
   /* ── transient state ── */
-  const [showAdd,    setShowAdd]    = useStateSAT(false);
+  /* showAdd starts true so the score form is always visible on first render */
+  const [showAdd,    setShowAdd]    = useStateSAT(true);
   const [editGoals,  setEditGoals]  = useStateSAT(false);
   const [scoreIn,    setScoreIn]    = useStateSAT('');
   const [dateIn,     setDateIn]     = useStateSAT(() => new Date().toISOString().slice(0, 10));
   const [noteIn,     setNoteIn]     = useStateSAT('');
+  const [scoreSaved, setScoreSaved] = useStateSAT(false);
   const [targetDraft,setTargetDraft]= useStateSAT('');
   const [dateDraft,  setDateDraft]  = useStateSAT('');
 
@@ -45,7 +47,11 @@ function SAT() {
     const n = parseInt(scoreIn);
     if (isNaN(n) || n < 400 || n > 1600) return;
     setScores(s => [{ id: Date.now(), date: dateIn, score: n, note: noteIn.trim() }, ...s]);
-    setScoreIn(''); setNoteIn(''); setShowAdd(false);
+    setScoreIn('');
+    setNoteIn('');
+    /* keep form open — just flash a saved indicator */
+    setScoreSaved(true);
+    setTimeout(() => setScoreSaved(false), 1500);
   };
   const del = (id) => setScores(s => s.filter(x => x.id !== id));
 
@@ -204,25 +210,32 @@ function SAT() {
           }}>
             practice tests · {scores.length}
           </span>
-          <span
-            onClick={() => setShowAdd(s => !s)}
-            style={{
-              fontFamily: 'var(--font-mono)', fontSize: 9,
-              color: showAdd ? 'var(--accent)' : 'var(--fg-3)',
-              cursor: 'pointer', letterSpacing: '0.06em',
-            }}>
-            {showAdd ? '✕ CANCEL' : '+ LOG SCORE'}
-          </span>
+          {scores.length > 0 && (
+            <span
+              onClick={() => setShowAdd(s => !s)}
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9,
+                color: 'var(--fg-4)', cursor: 'pointer', letterSpacing: '0.06em',
+              }}>
+              {showAdd ? 'HIDE FORM' : 'SHOW FORM'}
+            </span>
+          )}
         </div>
 
+        {/* Score entry form — visible by default, collapsible once scores exist */}
         {showAdd && (
           <div style={{
-            display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8,
-            padding: 8, background: 'var(--bg-1)', borderRadius: 4, border: '1px solid var(--border)',
+            display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10,
+            padding: '10px 10px 8px', background: 'var(--bg-1)', borderRadius: 4,
+            border: `1px solid ${scoreSaved ? 'var(--pos)' : 'var(--border)'}`,
+            transition: 'border-color 300ms',
           }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              LOG PRACTICE SCORE
+            </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <input
-                autoFocus type="number" value={scoreIn}
+                type="number" value={scoreIn}
                 onChange={e => setScoreIn(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addScore()}
                 placeholder="score (400–1600)"
@@ -236,30 +249,38 @@ function SAT() {
             <input
               value={noteIn} onChange={e => setNoteIn(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addScore()}
-              placeholder="notes (optional)"
+              placeholder="notes — e.g. Khan Academy full practice, weak in reading"
               style={{ ...inputSt, fontSize: 10 }}
             />
-            <span
-              onClick={addScore}
-              style={{
-                fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)',
-                cursor: 'pointer', letterSpacing: '0.06em', alignSelf: 'flex-end',
-              }}>
-              SAVE
-            </span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em' }}>
+                {scoreIn && (parseInt(scoreIn) < 400 || parseInt(scoreIn) > 1600)
+                  ? '⚠ score must be 400–1600'
+                  : ''}
+              </span>
+              <span
+                onClick={addScore}
+                style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  color: scoreSaved ? 'var(--pos)' : 'var(--accent)',
+                  cursor: 'pointer', letterSpacing: '0.06em', transition: 'color 300ms',
+                }}>
+                {scoreSaved ? '✓ SAVED' : 'SAVE SCORE'}
+              </span>
+            </div>
           </div>
         )}
 
-        {scores.length === 0 && !showAdd && (
+        {scores.length === 0 && (
           <div style={{
             fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)',
-            letterSpacing: '0.06em', padding: '4px 0',
+            letterSpacing: '0.06em', padding: '2px 0 6px',
           }}>
-            no practice scores logged yet
+            no practice scores logged yet — use the form above
           </div>
         )}
 
-        {scores.map(s => (
+        {[...scores].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(s => (
           <div key={s.id} style={{
             display: 'grid', gridTemplateColumns: '72px 1fr auto 18px',
             alignItems: 'center', gap: 8, padding: '5px 0',
@@ -273,7 +294,7 @@ function SAT() {
             }}>
               {s.score}
               {s.score === best && scores.length > 1 && (
-                <span style={{ fontSize: 8, marginLeft: 5, color: 'var(--pos)', letterSpacing: '0.08em' }}>BEST</span>
+                <span style={{ fontSize: 8, marginLeft: 5, color: 'var(--accent)', letterSpacing: '0.08em' }}>BEST</span>
               )}
             </span>
             <span style={{

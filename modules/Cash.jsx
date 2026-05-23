@@ -340,12 +340,9 @@ function Cash() {
         </div>
       </div>
 
+      {/* ── Plaid setup guide — shown when not configured or not connected ── */}
       {!isPlaidConnected && (
-        <div style={{ marginTop: 4, marginBottom: 4 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em' }}>
-            needs PLAID_CLIENT_ID + PLAID_SECRET in .env · sandbox or production
-          </span>
-        </div>
+        <PlaidSetupGuide error={plaidError} />
       )}
 
       <div style={{ marginTop: 12, marginBottom: 12 }}>
@@ -531,6 +528,81 @@ function Cash() {
       </div>
 
     </Card>
+  );
+}
+
+/* ── Plaid sandbox / production setup guide ──────────────────────────────── */
+function PlaidSetupGuide({ error }) {
+  const [showGuide, setShowGuide] = useStateCash(false);
+
+  const isNotConfigured = error && error.toLowerCase().includes('not configured');
+
+  return (
+    <div style={{ marginTop: 6, marginBottom: 2 }}>
+      {/* always-visible hint line */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em' }}>
+          {isNotConfigured
+            ? '⚠ PLAID_CLIENT_ID / PLAID_SECRET not set in .env'
+            : 'connect real bank via Plaid Link · sandbox or production'}
+        </span>
+        <span
+          onClick={() => setShowGuide(s => !s)}
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em', flexShrink: 0 }}>
+          {showGuide ? 'HIDE GUIDE' : 'SETUP GUIDE'}
+        </span>
+      </div>
+
+      {showGuide && (
+        <div style={{
+          marginTop: 8, padding: '10px 12px',
+          background: 'var(--bg-0)', border: '1px solid var(--border)',
+          borderRadius: 4,
+        }}>
+          {/* sandbox section */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--pos)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 7 }}>
+              SANDBOX SETUP (free, no real bank needed)
+            </div>
+            {[
+              ['1', 'Sign up free', 'dashboard.plaid.com → create a new app'],
+              ['2', 'Get credentials', 'Settings → API → copy Client ID + Sandbox Secret'],
+              ['3', 'Add to .env', 'PLAID_CLIENT_ID=xxx\nPLAID_SECRET=yyy\nPLAID_ENV=sandbox'],
+              ['4', 'Deploy', 'flyctl secrets set PLAID_CLIENT_ID="…" PLAID_SECRET="…" PLAID_ENV=sandbox'],
+              ['5', 'Test credentials', 'Plaid Link sandbox: username user_good / password pass_good'],
+            ].map(([num, label, detail]) => (
+              <div key={num} style={{ display: 'grid', gridTemplateColumns: '14px 90px 1fr', gap: 5, alignItems: 'baseline', marginBottom: 5 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)' }}>{num}.</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)' }}>{label}</span>
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-1)', background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail}</code>
+              </div>
+            ))}
+          </div>
+
+          {/* divider */}
+          <div style={{ borderTop: '1px dashed var(--border)', marginBottom: 12 }} />
+
+          {/* production section */}
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--warn)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 7 }}>
+              SWITCH TO PRODUCTION (real bank)
+            </div>
+            {[
+              ['1', 'Apply for Production access', 'dashboard.plaid.com → Team Settings → Request Production access'],
+              ['2', 'Get Production Secret', 'Settings → API → copy Production Secret'],
+              ['3', 'Update Fly secrets', 'flyctl secrets set PLAID_SECRET="prod-secret" PLAID_ENV=production'],
+              ['4', 'Reconnect', 'Click DISCONNECT then Connect Bank again to re-link with real credentials'],
+            ].map(([num, label, detail]) => (
+              <div key={num} style={{ display: 'grid', gridTemplateColumns: '14px 90px 1fr', gap: 5, alignItems: 'baseline', marginBottom: 5 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)' }}>{num}.</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)' }}>{label}</span>
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-2)', background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

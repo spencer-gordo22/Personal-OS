@@ -15,6 +15,7 @@ import os
 import re
 import socketserver
 import threading
+import time
 import urllib.request
 import urllib.parse
 import uuid
@@ -74,7 +75,17 @@ WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
 WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout'
-WHOOP_REDIRECT  = f'{BASE_URL}/whoop/callback'
+
+# WHOOP redirect URI — must match exactly what's registered in WHOOP Developer Portal.
+# Always use the Fly.io URL; local OAuth won't work (WHOOP requires HTTPS).
+WHOOP_REDIRECT = 'https://spencer-os.fly.dev/whoop/callback'
+
+# ── WHOOP OAuth state store ──────────────────────────────────────────────────
+# Keyed by a random UUID generated per auth attempt. Validated on callback.
+# In-memory only; clears on restart (fine — state tokens are short-lived).
+_WHOOP_STATES:      dict  = {}
+_WHOOP_STATES_LOCK        = threading.Lock()
+_WHOOP_STATE_TTL:   float = 600.0   # 10 minutes
 
 DEFAULT_SYMBOLS = ['QQQ', 'GLD', 'VOO', 'ETN']
 
@@ -448,41 +459,129 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     # ── WHOOP OAuth ───────────────────────────────────────────────────────────
 
     def _whoop_auth(self):
-        qs = parse_qs(urlparse(self.path).query)
+        qs  = parse_qs(urlparse(self.path).query)
         cid = qs.get('client_id', [''])[0].strip()
         if not cid:
             self._json_error(400, 'Missing client_id'); return
-        params = urllib.parse.urlencode({'client_id': cid, 'redirect_uri': WHOOP_REDIRECT,
-                                         'response_type': 'code', 'scope': WHOOP_SCOPE})
+
+        # Generate a one-time state token and store it server-side.
+        state = str(uuid.uuid4())
+        now   = time.time()
+        with _WHOOP_STATES_LOCK:
+            # Expire old entries first
+            expired = [k for k, ts in _WHOOP_STATES.items() if now - ts > _WHOOP_STATE_TTL]
+            for k in expired:
+                del _WHOOP_STATES[k]
+            _WHOOP_STATES[state] = now
+
+        params = urllib.parse.urlencode({
+            'client_id':     cid,
+            'redirect_uri':  WHOOP_REDIRECT,
+            'response_type': 'code',
+            'scope':         WHOOP_SCOPE,
+            'state':         state,
+        })
+        print(f'[whoop auth] redirect_uri={WHOOP_REDIRECT}  state={state[:8]}…')
         self.send_response(302)
         self.send_header('Location', f'{WHOOP_AUTH_URL}?{params}')
         self.end_headers()
 
     def _whoop_callback(self):
-        qs   = parse_qs(urlparse(self.path).query)
-        code = qs.get('code', [''])[0]
-        err  = qs.get('error', [''])[0]
+        qs      = parse_qs(urlparse(self.path).query)
+        code    = qs.get('code',  [''])[0]
+        err     = qs.get('error', [''])[0]
+        state   = qs.get('state', [''])[0]
+
+        # ── State validation ──────────────────────────────────────────────────
+        state_error = ''
+        if err:
+            state_error = f'WHOOP returned an error: {err}'
+        elif not state:
+            # No state in callback — WHOOP may not send it if none was passed.
+            # Allow through but log a warning.
+            print('[whoop callback] WARNING: no state in callback (CSRF unverified)')
+        else:
+            with _WHOOP_STATES_LOCK:
+                ts = _WHOOP_STATES.pop(state, None)
+            if ts is None:
+                state_error = (
+                    f'OAuth state mismatch (token not found: {state[:8]}…). '
+                    'This can happen if the page was refreshed or the link expired. '
+                    'Please start the connection again from the dashboard.'
+                )
+                print(f'[whoop callback] invalid_state: {state[:8]}…')
+            elif time.time() - ts > _WHOOP_STATE_TTL:
+                state_error = 'OAuth state expired — please reconnect.'
+                print(f'[whoop callback] state expired for {state[:8]}…')
+            else:
+                print(f'[whoop callback] state OK ({state[:8]}…)')
+
+        # ── Serve the callback page ───────────────────────────────────────────
+        # Pass state_error into the JS so the page can show it immediately
+        # without waiting for the async token exchange.
         html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>WHOOP</title>
 <style>body{{background:#001218;color:#8EB8C8;font-family:monospace;font-size:13px;
-display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0}}
-#msg{{color:#00D4FF}}#err{{color:#FF4D6D}}</style></head><body>
+display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;gap:12px;}}
+#msg{{color:#00D4FF;letter-spacing:.08em;}}#err{{color:#FF4D6D;max-width:480px;text-align:center;line-height:1.6;}}
+a{{color:#00D4FF;text-decoration:none;}}</style></head><body>
 <div id="msg">Connecting WHOOP…</div><div id="err"></div>
-<script>(async()=>{{const code={json.dumps(code)};const err={json.dumps(err)};
-if(err){{document.getElementById('err').textContent='WHOOP: '+err;return;}}
-if(!code){{document.getElementById('err').textContent='No code.';return;}}
-/* useLocalStorage stores values as JSON.stringify(value), so we must JSON.parse */
-let cid='',sec='';
-try{{cid=JSON.parse(localStorage.getItem('sos_whoop_client_id')||'""');}}catch{{cid=localStorage.getItem('sos_whoop_client_id')||'';}}
-try{{sec=JSON.parse(localStorage.getItem('sos_whoop_client_secret')||'""');}}catch{{sec=localStorage.getItem('sos_whoop_client_secret')||'';}}
-if(!cid||!sec){{document.getElementById('err').textContent='Missing creds in localStorage.';return;}}
-try{{const r=await fetch('/whoop/token',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-body:JSON.stringify({{code,client_id:cid,client_secret:sec}})}});
-if(!r.ok)throw new Error(await r.text());
-const t=await r.json();t.fetched_at=Date.now();
-localStorage.setItem('sos_whoop_token',JSON.stringify(t));
-document.getElementById('msg').textContent='Connected! Redirecting…';
-setTimeout(()=>window.location.href='/',800);}}catch(e){{
-document.getElementById('err').textContent='Token exchange: '+e.message;}}}})()</script>
+<script>(async()=>{{
+const code      = {json.dumps(code)};
+const whoopErr  = {json.dumps(err)};
+const stateErr  = {json.dumps(state_error)};
+
+const msgEl = document.getElementById('msg');
+const errEl = document.getElementById('err');
+
+if(stateErr){{
+  msgEl.textContent = 'Connection failed';
+  errEl.innerHTML   = stateErr + '<br><br><a href="/">← Back to dashboard</a>';
+  return;
+}}
+if(whoopErr){{
+  msgEl.textContent = 'Connection failed';
+  errEl.innerHTML   = 'WHOOP error: ' + whoopErr + '<br><br><a href="/">← Back to dashboard</a>';
+  return;
+}}
+if(!code){{
+  msgEl.textContent = 'Connection failed';
+  errEl.innerHTML   = 'No authorisation code received.<br><br><a href="/">← Back to dashboard</a>';
+  return;
+}}
+
+/* useLocalStorage stores values as JSON.stringify(value) — must JSON.parse */
+let cid='', sec='';
+try{{ cid = JSON.parse(localStorage.getItem('sos_whoop_client_id')  || '""'); }}
+catch{{ cid = localStorage.getItem('sos_whoop_client_id')  || ''; }}
+try{{ sec = JSON.parse(localStorage.getItem('sos_whoop_client_secret') || '""'); }}
+catch{{ sec = localStorage.getItem('sos_whoop_client_secret') || ''; }}
+
+if(!cid || !sec){{
+  msgEl.textContent = 'Connection failed';
+  errEl.innerHTML   = 'WHOOP Client ID or Secret not found in localStorage.<br>'
+    + 'Make sure you entered them on the Health Pulse module before connecting.<br><br>'
+    + '<a href="/">← Back to dashboard</a>';
+  return;
+}}
+
+msgEl.textContent = 'Exchanging token…';
+try{{
+  const r = await fetch('/whoop/token', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{code, client_id: cid, client_secret: sec}}),
+  }});
+  if(!r.ok) throw new Error(await r.text());
+  const t = await r.json();
+  t.fetched_at = Date.now();
+  localStorage.setItem('sos_whoop_token', JSON.stringify(t));
+  msgEl.textContent = '✓ Connected! Redirecting…';
+  setTimeout(() => window.location.href = '/', 800);
+}} catch(e) {{
+  msgEl.textContent = 'Connection failed';
+  errEl.innerHTML   = 'Token exchange error: ' + e.message + '<br><br><a href="/">← Back to dashboard</a>';
+}}
+}})()</script>
 </body></html>"""
         body = html.encode()
         self.send_response(200)
