@@ -205,20 +205,106 @@ def _gpt_classify(text: str, source: str) -> dict:
 # Supabase CRM insert
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _supa_insert_crm(item: dict) -> bool:
-    body = json.dumps(item).encode()
-    req  = urllib.request.Request(f'{SUPA_URL}/rest/v1/crm_items', data=body, method='POST',
-               headers={'apikey': SUPA_KEY, 'Authorization': f'Bearer {SUPA_KEY}',
-                        'Content-Type': 'application/json', 'Prefer': 'return=minimal'})
+# Columns that exist in the crm_items table — strip everything else so
+# PostgREST doesn't reject the row with "column does not exist".
+_CRM_FIELDS = frozenset({
+    'type', 'title', 'body', 'priority', 'status',
+    'due_date', 'contact_name', 'tags', 'source', 'raw_transcript',
+})
+
+
+def _sanitise_crm_item(item: dict) -> dict:
+    """
+    Coerce GPT output into the exact shape crm_items expects.
+
+    Common GPT quirks that cause PostgREST 400 errors:
+      • tags: null  → must be [] (text[] rejects null at insert)
+      • due_date: "" → must be null (date column rejects empty string)
+      • extra keys  → PostgREST rejects unknown column names
+      • title: ""   → NOT NULL column, needs a fallback
+    """
+    out: dict = {}
+    for k in _CRM_FIELDS:
+        v = item.get(k)
+
+        if k == 'tags':
+            # Guarantee a JSON array, never null/None/string
+            if v is None:
+                v = []
+            elif isinstance(v, str):
+                v = [t.strip() for t in v.split(',') if t.strip()] if v else []
+
+        elif k == 'due_date':
+            # Postgres date rejects '' — coerce to None/null
+            if not v or not isinstance(v, str) or not v.strip():
+                v = None
+
+        elif k == 'title':
+            # NOT NULL — fall back to first 80 chars of body or a default
+            if not v or not str(v).strip():
+                v = str(item.get('body', '') or item.get('raw_transcript', '') or 'Untitled')[:80].strip() or 'Untitled'
+
+        elif k == 'type':
+            # Constrain to known values; default to 'task'
+            VALID_TYPES = {'task','note','contact','meeting','follow_up','deal','reminder'}
+            if v not in VALID_TYPES:
+                v = 'task'
+
+        out[k] = v
+
+    return out
+
+
+def _supa_insert_crm(item: dict) -> tuple:
+    """
+    Insert a CRM item.  Returns (ok: bool, error_msg: str).
+    error_msg is '' on success.
+    """
+    if not SUPA_URL or not SUPA_KEY:
+        msg = 'SUPA_URL or SUPA_KEY not configured'
+        print(f'[supa crm] {msg}')
+        return False, msg
+
+    clean = _sanitise_crm_item(item)
+    body  = json.dumps(clean).encode()
+
+    print(f'[supa crm] INSERT → {json.dumps(clean, ensure_ascii=False)[:400]}')
+
+    req = urllib.request.Request(
+        f'{SUPA_URL}/rest/v1/crm_items', data=body, method='POST',
+        headers={
+            'apikey':        SUPA_KEY,
+            'Authorization': f'Bearer {SUPA_KEY}',
+            'Content-Type':  'application/json',
+            'Prefer':        'return=minimal',
+        })
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status in (200, 201)
+            http_status = r.status
+            resp_body   = r.read().decode()[:200]
+        print(f'[supa crm] response HTTP {http_status}  body={resp_body!r}')
+        # PostgREST INSERT with return=minimal → 201 Created (empty body)
+        # Some PostgREST versions may return 204 No Content
+        if http_status in (200, 201, 204):
+            return True, ''
+        msg = f'Unexpected HTTP {http_status}: {resp_body}'
+        print(f'[supa crm] unexpected success status: {msg}')
+        return False, msg
+
     except urllib.request.HTTPError as e:
-        print(f'[supa crm] HTTP {e.code}: {e.read().decode()[:200]}')
-        return False
+        raw = ''
+        try:
+            raw = e.read().decode()[:600]
+        except Exception:
+            pass
+        msg = f'HTTP {e.code}: {raw}'
+        print(f'[supa crm] HTTP error: {msg}')
+        return False, msg
+
     except Exception as e:
-        print(f'[supa crm] {e}')
-        return False
+        msg = str(e)
+        print(f'[supa crm] exception: {msg}')
+        return False, msg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -251,8 +337,8 @@ def _handle_tg_update(update: dict) -> None:
             _tg_send(chat_id, '⚠️ Send text or a voice note.'); return
 
         _tg_send(chat_id, '🧠 Classifying…')
-        item = _gpt_classify(text, source)
-        ok   = _supa_insert_crm(item)
+        item     = _gpt_classify(text, source)
+        ok, err  = _supa_insert_crm(item)
 
         if ok:
             EMOJI = {'task':'✅','note':'📝','contact':'👤','meeting':'📅',
@@ -260,12 +346,13 @@ def _handle_tg_update(update: dict) -> None:
             e = EMOJI.get(item.get('type','task'), '✅')
             reply = (f"{e} *{item.get('title','Saved')}*\n"
                      f"Type: `{item.get('type','task')}`  ·  Priority: `{item.get('priority','medium')}`")
-            if item.get('due_date'):    reply += f"\nDue: `{item['due_date']}`"
+            if item.get('due_date'):     reply += f"\nDue: `{item['due_date']}`"
             if item.get('contact_name'): reply += f"\nContact: {item['contact_name']}"
-            if item.get('tags'):        reply += '\nTags: ' + '  '.join(f'`{t}`' for t in item['tags'])
+            if item.get('tags'):         reply += '\nTags: ' + '  '.join(f'`{t}`' for t in item['tags'])
             _tg_send(chat_id, reply)
         else:
-            _tg_send(chat_id, '❌ Supabase write failed — check server logs.')
+            # Send the actual error so you don't have to check server logs
+            _tg_send(chat_id, f'❌ *Supabase write failed*\n`{err[:400]}`')
 
     except Exception as exc:
         print(f'[tg handler] {exc}')
@@ -300,6 +387,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         p = self.path
         if   p.startswith('/api/quotes'):            self._proxy_quotes()
         elif p.startswith('/api/config'):            self._api_config()
+        elif p.startswith('/api/debug/crm'):         self._debug_crm()
         elif p.startswith('/api/hevy'):              self._hevy_proxy()
         elif p.startswith('/api/plaid/config'):      self._plaid_config()
         elif p.startswith('/api/plaid/balance'):     self._plaid_balance()
@@ -478,6 +566,80 @@ document.getElementById('err').textContent='Token exchange: '+e.message;}}}})()<
             threading.Thread(target=_handle_tg_update, args=(update,), daemon=True).start()
         except Exception as e:
             print(f'[telegram webhook] {e}')
+
+    # ── CRM debug ────────────────────────────────────────────────────────────
+
+    def _debug_crm(self):
+        """
+        Smoke-test the crm_items table and try a test INSERT + DELETE.
+        Hit: GET /api/debug/crm
+        Returns JSON with 'ok', 'checks', and any error details.
+        """
+        checks = {}
+        overall_ok = True
+
+        # 1. Config present?
+        checks['config'] = {
+            'supa_url_set': bool(SUPA_URL),
+            'supa_key_set': bool(SUPA_KEY),
+        }
+        if not SUPA_URL or not SUPA_KEY:
+            self._json({'ok': False, 'checks': checks, 'error': 'SUPA_URL or SUPA_KEY missing'}); return
+
+        # 2. SELECT from crm_items
+        try:
+            req = urllib.request.Request(
+                f'{SUPA_URL}/rest/v1/crm_items?select=id,type,title&order=created_at.desc&limit=3',
+                headers={'apikey': SUPA_KEY, 'Authorization': f'Bearer {SUPA_KEY}',
+                         'Accept': 'application/json', 'User-Agent': UA})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                rows = json.loads(r.read().decode())
+            checks['select'] = {'ok': True, 'row_count': len(rows), 'rows': rows}
+        except urllib.request.HTTPError as e:
+            raw = ''
+            try: raw = e.read().decode()[:400]
+            except: pass
+            checks['select'] = {'ok': False, 'http_status': e.code, 'error': raw}
+            overall_ok = False
+        except Exception as e:
+            checks['select'] = {'ok': False, 'error': str(e)}
+            overall_ok = False
+
+        # 3. Try a test INSERT (with __debug__=true marker) then immediately DELETE it
+        test_item = {
+            'type': 'note', 'title': '__debug_test__',
+            'body': 'automated test insert — will be deleted immediately',
+            'priority': 'low', 'status': 'open',
+            'tags': ['__debug__'], 'source': 'debug',
+            'due_date': None, 'contact_name': None, 'raw_transcript': '',
+        }
+        insert_ok, insert_err = _supa_insert_crm(test_item)
+        checks['insert'] = {'ok': insert_ok, 'error': insert_err}
+        if not insert_ok:
+            overall_ok = False
+
+        if insert_ok:
+            # clean up test row
+            try:
+                del_req = urllib.request.Request(
+                    f'{SUPA_URL}/rest/v1/crm_items?title=eq.__debug_test__',
+                    method='DELETE',
+                    headers={'apikey': SUPA_KEY, 'Authorization': f'Bearer {SUPA_KEY}',
+                             'User-Agent': UA})
+                with urllib.request.urlopen(del_req, timeout=10) as r:
+                    checks['cleanup'] = {'ok': True, 'http_status': r.status}
+            except Exception as e:
+                checks['cleanup'] = {'ok': False, 'error': str(e)}
+
+        self._json({'ok': overall_ok, 'checks': checks})
+
+    def _json(self, data: dict):
+        body = json.dumps(data, ensure_ascii=False, indent=2).encode()
+        self.send_response(200)
+        self.send_header('Content-Type',   'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     # ── Hevy proxy ────────────────────────────────────────────────────────────
 
