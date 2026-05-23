@@ -132,6 +132,11 @@
   --dur-slow:    200ms;
 }
 
+/* Global box model — prevent padding/border from adding to declared widths */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 html, body {
   background: var(--bg-1);
   color: var(--fg-1);
@@ -142,6 +147,7 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   /* Hard-clip horizontal overflow so no element ever triggers page-wide scroll */
+  width: 100%;
   max-width: 100vw;
   overflow-x: hidden;
 }
@@ -333,18 +339,19 @@ html, body {
 
 @media (max-width: 768px) {
 
-  /* Root overflow lock — belt-and-suspenders with html/body above */
+  /* ── Root overflow lock ──────────────────────────────────────────────────── */
   #root {
-    overflow-x: hidden;
+    width: 100%;
     max-width: 100vw;
+    overflow-x: hidden;
   }
 
-  /* Sidebar hidden on mobile */
+  /* ── Sidebar hidden on mobile ────────────────────────────────────────────── */
   .sos-sidebar {
     display: none !important;
   }
 
-  /* Bottom navigation bar */
+  /* ── Bottom navigation bar ───────────────────────────────────────────────── */
   .sos-bottom-nav {
     display: flex;
     position: fixed;
@@ -362,55 +369,77 @@ html, body {
   /* Main content gets bottom padding so cards aren't hidden behind tab bar */
   .sos-main {
     padding-bottom: 68px !important;
+    /* guarantee the scrolling viewport never overflows horizontally */
+    width: 100% !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
   }
 
-  /* Dashboard 12-col grid → single column */
+  /* ── Grid layouts → single column ───────────────────────────────────────── */
   .sos-dashboard-grid {
     grid-template-columns: 1fr !important;
   }
+  /* Every direct grid child MUST be allowed to shrink below its content width */
   .sos-dashboard-grid > div {
     grid-column: span 1 !important;
+    min-width: 0;
+    width: 100%;
   }
 
-  /* Module views become full width */
   .sos-module-view > div {
     grid-template-columns: 1fr !important;
   }
   .sos-module-view > div > div {
     grid-column: span 1 !important;
+    min-width: 0;
+    width: 100%;
   }
 
-  /* Page heading font size */
+  /* ── Typography ──────────────────────────────────────────────────────────── */
   .sos-page-title {
     font-size: 20px !important;
   }
 
-  /* Tables and week strips — horizontal scroll instead of overflow */
+  /* ── Topbar command bar — hidden on mobile ───────────────────────────────── */
+  .sos-topbar-cmd {
+    display: none !important;
+  }
+
+  /* ── Tables / horizontal scroll zones ───────────────────────────────────── */
   .sos-scroll-x {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Topbar command bar — hidden on mobile */
-  .sos-topbar-cmd {
-    display: none !important;
-  }
-
-  /* Cards must never exceed their containing grid cell */
+  /* ── Cards: hard-constrained to their container ─────────────────────────── */
   .card {
-    min-width: 0;
+    /* Never wider than parent; border-box so border doesn't add width */
+    width: 100%;
     max-width: 100%;
-    box-sizing: border-box;
-  }
-  .card-body {
     min-width: 0;
-    max-width: 100%;
+    /* clip any child that still manages to overflow */
     overflow: hidden;
   }
 
-  /* All text that has nowrap must be able to truncate instead of blowing layout */
   .card-header {
+    /* Prevent long labels from expanding the header beyond card width */
     overflow: hidden;
+    min-width: 0;
+  }
+
+  .card-body {
+    /* Allow the body to shrink, clip horizontal overflow only */
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+  }
+
+  /* ── Flex children within cards: allow shrinking ─────────────────────────── */
+  /* Any direct flex child that forgets min-width:0 will be caught here */
+  .card-body > div,
+  .card-body > span {
+    min-width: 0;
   }
 }
 

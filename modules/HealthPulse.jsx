@@ -209,7 +209,7 @@ function HealthPulse() {
       {/* ── bottom 5 mini metrics ── */}
       <div style={{
         marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)',
-        display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8,
+        display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8,
       }}>
 
         <Mini label="steps" value={h.steps.toLocaleString()}
@@ -350,12 +350,13 @@ function Mini({ label, value, tone, color, editNode }) {
   const textColor = color
     || (tone === 'pos' ? 'var(--pos)' : tone === 'neg' ? 'var(--neg)' : 'var(--fg-1)');
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span className="label-micro" style={{ color: 'var(--fg-3)' }}>{label}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <span className="label-micro" style={{ color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
       {editNode || (
         <span style={{
           fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500,
           color: textColor, fontVariantNumeric: 'tabular-nums',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{value}</span>
       )}
     </div>

@@ -206,7 +206,7 @@ function Investments() {
       </div>
 
       {/* ══ holdings table — scrolls horizontally on narrow screens ═══════ */}
-      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', margin: '0 -4px', padding: '0 4px' }}>
+      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
       <div style={{ minWidth: 360 }}>
 
         {/* column headers */}

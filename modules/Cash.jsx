@@ -298,8 +298,8 @@ function Cash() {
       }>
 
       {/* ── balance ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-        <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="label-micro" style={{ marginBottom: 6 }}>balance</div>
           {editBal ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -318,7 +318,7 @@ function Cash() {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
           {!isPlaidConnected ? (
             <button
               onClick={connectPlaid}
@@ -421,11 +421,11 @@ function Cash() {
                   ) : (
                     <span
                       onClick={editMode ? () => openField(i, 'name', c.name) : undefined}
-                      style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)', letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap', cursor: editMode ? 'text' : 'default' }}>
+                      style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)', letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap', cursor: editMode ? 'text' : 'default', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {c.name}
                     </span>
                   )}
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                     {is(i, 'spent') ? (
                       <input autoFocus value={activeVal} onChange={e => setActiveVal(e.target.value)} onBlur={commitField} onKeyDown={fieldKey} style={iStyle(62)} />
                     ) : (
