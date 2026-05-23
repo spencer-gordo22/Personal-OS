@@ -28,17 +28,46 @@ function CRM() {
   const [filter,     setFilter]     = useStateCRM('all');
   const [showClosed, setShowClosed] = useStateCRM(false);
 
+  /* ── Format a Supabase error into a readable string ── */
+  function fmtErr(err) {
+    if (!err) return 'Unknown error';
+    const parts = [];
+    if (err.message) parts.push(err.message);
+    if (err.code)    parts.push(`code=${err.code}`);
+    if (err.hint)    parts.push(`hint: ${err.hint}`);
+    if (err.details) parts.push(`details: ${err.details}`);
+    return parts.join(' · ') || String(err);
+  }
+
   const loadItems = useCallbackCRM(async () => {
-    const db = window._supa;
-    if (!db) { setError('Supabase not connected'); setLoading(false); return; }
     setLoading(true);
+    setError('');
+
+    /* Always await _supaReady — never read window._supa directly.
+       On a cold Fly.io start, /api/config may not have returned yet
+       when this effect fires, so window._supa is still undefined.
+       Awaiting _supaReady guarantees the client is fully initialised. */
+    const db = await (window._supaReady || Promise.resolve(window._supa || null));
+
+    if (!db) {
+      setError('Supabase not connected — check that SUPA_URL and SUPA_KEY are set on Fly.io (flyctl secrets list)');
+      setLoading(false);
+      return;
+    }
+
     const { data, error: err } = await db
       .from('crm_items')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(200);
-    if (err) { setError(err.message); }
-    else      { setItems(data || []); setError(''); }
+
+    if (err) {
+      setError(fmtErr(err));
+      console.error('[CRM] Supabase query error:', err);
+    } else {
+      setItems(data || []);
+      setError('');
+    }
     setLoading(false);
   }, []);
 
