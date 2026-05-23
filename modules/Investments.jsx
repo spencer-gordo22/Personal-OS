@@ -205,8 +205,9 @@ function Investments() {
         />
       </div>
 
-      {/* ══ holdings table ═════════════════════════════════ */}
-      <div>
+      {/* ══ holdings table — scrolls horizontally on narrow screens ═══════ */}
+      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', margin: '0 -4px', padding: '0 4px' }}>
+      <div style={{ minWidth: 360 }}>
 
         {/* column headers */}
         <div style={{ display: 'grid', gridTemplateColumns: COL, gap: 6, marginBottom: 6, paddingBottom: 5, borderBottom: '1px solid var(--border)' }}>
@@ -297,7 +298,8 @@ function Investments() {
             </div>
           ))}
         </div>
-      </div>
+      </div>{/* /minWidth wrapper */}
+      </div>{/* /overflowX scroll container */}
 
       {/* ══ add position form ══════════════════════════════ */}
       {showAdd && (

@@ -48,7 +48,7 @@ function CommandPalette({ open, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 560, background: 'var(--bg-4)',
+          width: 'min(560px, calc(100vw - 24px))', background: 'var(--bg-4)',
           border: '1px solid var(--border-strong)',
           borderRadius: 8,
           boxShadow: '0 12px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,212,255,0.10)',

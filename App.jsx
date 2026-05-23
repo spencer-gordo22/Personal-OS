@@ -589,14 +589,14 @@ function App() {
   const pageLabel   = VIEWS[active]?.label ?? active;
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', background: 'var(--bg-1)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100vh', width: '100vw', maxWidth: '100vw', background: 'var(--bg-1)', overflow: 'hidden' }}>
       <Sidebar
         activeId={active}
         onSelect={setActive}
         onHome={() => setActive('dashboard')}
       />
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         <TopBar
           onOpenCommand={() => setCmdOpen(true)}
           activePage={pageLabel}
@@ -604,7 +604,7 @@ function App() {
         />
 
         <main className="sos-main" style={{
-          flex: 1, overflowY: 'auto',
+          flex: 1, overflowY: 'auto', overflowX: 'hidden',
           padding: isMobile ? 8 : 12,
           backgroundColor: 'var(--bg-1)',
           backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 0)',

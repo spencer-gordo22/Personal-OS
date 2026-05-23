@@ -141,6 +141,9 @@ html, body {
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Hard-clip horizontal overflow so no element ever triggers page-wide scroll */
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 .h1, h1 { font-family: var(--font-sans); font-size: var(--fs-h1); font-weight: var(--fw-semibold); letter-spacing: var(--track-display); line-height: var(--lh-display); color: var(--fg-1); margin: 0; }
@@ -330,6 +333,12 @@ html, body {
 
 @media (max-width: 768px) {
 
+  /* Root overflow lock — belt-and-suspenders with html/body above */
+  #root {
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
+
   /* Sidebar hidden on mobile */
   .sos-sidebar {
     display: none !important;
@@ -382,9 +391,26 @@ html, body {
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Topbar text adjustments */
+  /* Topbar command bar — hidden on mobile */
   .sos-topbar-cmd {
     display: none !important;
+  }
+
+  /* Cards must never exceed their containing grid cell */
+  .card {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .card-body {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  /* All text that has nowrap must be able to truncate instead of blowing layout */
+  .card-header {
+    overflow: hidden;
   }
 }
 
