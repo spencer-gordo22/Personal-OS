@@ -605,28 +605,28 @@ function App() {
 
         <main className="sos-main" style={{
           flex: 1, overflowY: 'auto', overflowX: 'hidden',
-          padding: isMobile ? 8 : 12,
+          padding: isMobile ? 0 : 12,
           backgroundColor: 'var(--bg-1)',
-          backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 0)',
+          backgroundImage: isMobile ? 'none' : 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 0)',
           backgroundSize: '16px 16px',
         }}>
-          {/* page title strip */}
-          <div style={{
+          {/* page title strip — desktop only */}
+          {!isMobile && (
+          <div className="sos-page-title-section" style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-            padding: isMobile ? '6px 2px 12px' : '8px 4px 16px',
+            padding: '8px 4px 16px',
             flexWrap: 'wrap', gap: 8,
           }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
               <h1 className="sos-page-title" style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--fg-1)' }}>
                 {pageLabel}
               </h1>
-              {!isMobile && (
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  {todayStamp()}
-                </span>
-              )}
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                {todayStamp()}
+              </span>
             </div>
           </div>
+          )}
 
           {isDashboard
             ? <DashboardGrid isMobile={isMobile} />

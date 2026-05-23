@@ -116,16 +116,18 @@ function Sidebar({ activeId, onSelect, onHome }) {
               onClick={() => tab.id === 'dashboard' ? onHome() : onSelect(tab.id)}
               style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center',
-                justifyContent: 'center', gap: 3, flex: 1,
-                padding: '6px 0', cursor: 'pointer',
-                color: isActive ? 'var(--accent)' : 'var(--fg-3)',
-                transition: 'color 120ms',
+                gap: 4, flex: 1, cursor: 'pointer',
+                color: isActive ? '#00D4FF' : '#3A3A45',
+                transition: 'color 100ms ease',
+                WebkitTapHighlightColor: 'transparent',
+                userSelect: 'none',
               }}>
-              <Icon name={tab.icon} size={20} />
+              <Icon name={tab.icon} size={22} />
               <span style={{
-                fontFamily: 'var(--font-mono)', fontSize: 8,
-                letterSpacing: '0.06em', textTransform: 'uppercase',
+                fontFamily: 'var(--font-sans)', fontSize: 9, fontWeight: 500,
+                letterSpacing: '0.04em', textTransform: 'uppercase',
                 lineHeight: 1,
+                color: isActive ? '#00D4FF' : '#3A3A45',
               }}>
                 {tab.name}
               </span>

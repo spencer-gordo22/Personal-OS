@@ -1,4 +1,4 @@
-/* global React, Card, Icon, useLocalStorage */
+/* global React, Card, Icon, useLocalStorage, useIsMobile */
 const { useState: useStateInv, useEffect: useEffectInv } = React;
 
 /* ─────────────────────────────────────────────
@@ -38,6 +38,7 @@ const baseInp = {
    Main component
    ════════════════════════════════════════════════ */
 function Investments() {
+  const isMobile = useIsMobile();
 
   /* ── persistent positions ── */
   const [positions, setPositions] = useLocalStorage('sos_positions_v2', INITIAL_POSITIONS);
@@ -186,7 +187,7 @@ function Investments() {
       }>
 
       {/* ══ portfolio summary ══════════════════════════════ */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: isMobile ? 14 : 10, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
         <PfKpi
           label="portfolio value"
           value={totalValue !== null ? `$${totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
@@ -205,101 +206,148 @@ function Investments() {
         />
       </div>
 
-      {/* ══ holdings table — scrolls horizontally on narrow screens ═══════ */}
-      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-      <div style={{ minWidth: 360 }}>
+      {/* ══ holdings table ════════════════════════════════════════════════════ */}
+      {isMobile ? (
 
-        {/* column headers */}
-        <div style={{ display: 'grid', gridTemplateColumns: COL, gap: 6, marginBottom: 6, paddingBottom: 5, borderBottom: '1px solid var(--border)' }}>
-          {['sym', 'shares ✎', 'price / basis ✎', 'value', 'gain / %', 'day', ''].map((h, i) => (
-            <span key={i} className="label-micro" style={{ color: 'var(--fg-4)', textAlign: i >= 2 ? 'right' : 'left' }}>{h}</span>
-          ))}
+        /* ── Mobile: SYM · VALUE · DAY — 3 cols, zero horizontal scroll ── */
+        <div>
+          {/* headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: '48px 1fr 66px 18px', gap: 6, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>
+            {['sym', 'value', 'day', ''].map((h, i) => (
+              <span key={i} className="label-micro" style={{ color: 'var(--fg-4)', textAlign: i >= 1 ? 'right' : 'left' }}>{h}</span>
+            ))}
+          </div>
+          {/* rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+            {rows.map((r, idx) => (
+              <div key={r.sym} style={{ display: 'grid', gridTemplateColumns: '48px 1fr 66px 18px', gap: 6, alignItems: 'center' }}>
+                {/* symbol */}
+                <span style={{ ...MONO, fontSize: 13, fontWeight: 700, color: 'var(--fg-1)', letterSpacing: '0.04em' }}>
+                  {r.sym}
+                </span>
+                {/* value */}
+                <span style={{ ...MONO, fontSize: 15, fontWeight: 500, color: 'var(--fg-1)', textAlign: 'right' }}>
+                  {r.value !== null ? d$(r.value) : '—'}
+                </span>
+                {/* day % */}
+                <span style={{ ...MONO, fontSize: 13, textAlign: 'right', color: clr(r.lq?.dayPct) }}>
+                  {r.lq
+                    ? `${r.lq.dayPct >= 0 ? '▲' : '▼'}${Math.abs(r.lq.dayPct).toFixed(2)}%`
+                    : '—'}
+                </span>
+                {/* delete */}
+                <span
+                  onClick={() => removePos(idx)}
+                  title="Remove position"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--neg)', opacity: 0.3 }}
+                  onTouchStart={e => e.currentTarget.style.opacity = '1'}
+                  onTouchEnd={e => e.currentTarget.style.opacity = '0.3'}>
+                  <Icon name="x" size={12} />
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
 
-        {/* rows */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
-          {rows.map((r, idx) => (
-            <div key={r.sym} style={{ display: 'grid', gridTemplateColumns: COL, gap: 6, alignItems: 'center' }}>
+      ) : (
 
-              {/* symbol */}
-              <span style={{ ...MONO, fontSize: 12, fontWeight: 600, color: 'var(--fg-1)', letterSpacing: '0.04em' }}>
-                {r.sym}
-              </span>
+        /* ── Desktop: full 7-col table ── */
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <div style={{ minWidth: 360 }}>
 
-              {/* shares — click to edit */}
-              {isEd(idx, 'shares') ? (
-                <input autoFocus value={editVal}
-                  onChange={e => setEditVal(e.target.value)}
-                  onBlur={commitEdit} onKeyDown={editKey}
-                  style={baseInp}
-                />
-              ) : (
-                <span
-                  onClick={() => openEdit(idx, 'shares', r.shares)}
-                  title="Click to edit shares"
-                  style={{ ...MONO, fontSize: 12, color: r.shares > 0 ? 'var(--fg-1)' : 'var(--fg-4)', cursor: 'text', textAlign: 'right' }}>
-                  {r.shares > 0 ? (Number.isInteger(r.shares) ? r.shares : r.shares.toFixed(4).replace(/\.?0+$/, '')) : '—'}
+          {/* column headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: COL, gap: 6, marginBottom: 6, paddingBottom: 5, borderBottom: '1px solid var(--border)' }}>
+            {['sym', 'shares ✎', 'price / basis ✎', 'value', 'gain / %', 'day', ''].map((h, i) => (
+              <span key={i} className="label-micro" style={{ color: 'var(--fg-4)', textAlign: i >= 2 ? 'right' : 'left' }}>{h}</span>
+            ))}
+          </div>
+
+          {/* rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {rows.map((r, idx) => (
+              <div key={r.sym} style={{ display: 'grid', gridTemplateColumns: COL, gap: 6, alignItems: 'center' }}>
+
+                {/* symbol */}
+                <span style={{ ...MONO, fontSize: 12, fontWeight: 600, color: 'var(--fg-1)', letterSpacing: '0.04em' }}>
+                  {r.sym}
                 </span>
-              )}
 
-              {/* price (live) + avg cost (click to edit) stacked */}
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ ...MONO, fontSize: 12, color: 'var(--fg-1)' }}>
-                  {r.price !== null ? d2(r.price) : status === 'syncing' ? '…' : '—'}
-                </div>
-                {isEd(idx, 'basis') ? (
+                {/* shares — click to edit */}
+                {isEd(idx, 'shares') ? (
                   <input autoFocus value={editVal}
                     onChange={e => setEditVal(e.target.value)}
                     onBlur={commitEdit} onKeyDown={editKey}
-                    style={{ ...baseInp, fontSize: 10, marginTop: 3 }}
+                    style={baseInp}
                   />
                 ) : (
-                  <div
-                    onClick={() => openEdit(idx, 'basis', r.basis)}
-                    title="Click to edit avg cost basis"
-                    style={{ ...MONO, fontSize: 9, color: 'var(--fg-3)', cursor: 'text', marginTop: 3 }}>
-                    {r.basis > 0 ? `${d2(r.basis)} avg` : 'set basis'}
-                  </div>
+                  <span
+                    onClick={() => openEdit(idx, 'shares', r.shares)}
+                    title="Click to edit shares"
+                    style={{ ...MONO, fontSize: 12, color: r.shares > 0 ? 'var(--fg-1)' : 'var(--fg-4)', cursor: 'text', textAlign: 'right' }}>
+                    {r.shares > 0 ? (Number.isInteger(r.shares) ? r.shares : r.shares.toFixed(4).replace(/\.?0+$/, '')) : '—'}
+                  </span>
                 )}
-              </div>
 
-              {/* current value */}
-              <span style={{ ...MONO, fontSize: 12, color: 'var(--fg-1)', textAlign: 'right' }}>
-                {r.value !== null ? d$(r.value) : '—'}
-              </span>
-
-              {/* gain $ + gain % stacked */}
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ ...MONO, fontSize: 12, color: clr(r.gain$) }}>
-                  {r.gain$ !== null ? `${sgn(r.gain$)}${d$(r.gain$)}` : '—'}
+                {/* price (live) + avg cost (click to edit) stacked */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ ...MONO, fontSize: 12, color: 'var(--fg-1)' }}>
+                    {r.price !== null ? d2(r.price) : status === 'syncing' ? '…' : '—'}
+                  </div>
+                  {isEd(idx, 'basis') ? (
+                    <input autoFocus value={editVal}
+                      onChange={e => setEditVal(e.target.value)}
+                      onBlur={commitEdit} onKeyDown={editKey}
+                      style={{ ...baseInp, fontSize: 10, marginTop: 3 }}
+                    />
+                  ) : (
+                    <div
+                      onClick={() => openEdit(idx, 'basis', r.basis)}
+                      title="Click to edit avg cost basis"
+                      style={{ ...MONO, fontSize: 9, color: 'var(--fg-3)', cursor: 'text', marginTop: 3 }}>
+                      {r.basis > 0 ? `${d2(r.basis)} avg` : 'set basis'}
+                    </div>
+                  )}
                 </div>
-                <div style={{ ...MONO, fontSize: 9, color: clr(r.gainPct), marginTop: 3 }}>
-                  {pct(r.gainPct)}
+
+                {/* current value */}
+                <span style={{ ...MONO, fontSize: 12, color: 'var(--fg-1)', textAlign: 'right' }}>
+                  {r.value !== null ? d$(r.value) : '—'}
+                </span>
+
+                {/* gain $ + gain % stacked */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ ...MONO, fontSize: 12, color: clr(r.gain$) }}>
+                    {r.gain$ !== null ? `${sgn(r.gain$)}${d$(r.gain$)}` : '—'}
+                  </div>
+                  <div style={{ ...MONO, fontSize: 9, color: clr(r.gainPct), marginTop: 3 }}>
+                    {pct(r.gainPct)}
+                  </div>
                 </div>
+
+                {/* day % */}
+                <span style={{ ...MONO, fontSize: 11, textAlign: 'right', color: clr(r.lq?.dayPct) }}>
+                  {r.lq
+                    ? `${r.lq.dayPct >= 0 ? '▲' : '▼'}${Math.abs(r.lq.dayPct).toFixed(2)}%`
+                    : '—'}
+                </span>
+
+                {/* delete */}
+                <span
+                  onClick={() => removePos(idx)}
+                  title="Remove position"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--neg)', opacity: 0.35, transition: 'opacity 120ms' }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                  onMouseLeave={e => e.currentTarget.style.opacity = '0.35'}>
+                  <Icon name="x" size={11} />
+                </span>
+
               </div>
-
-              {/* day % */}
-              <span style={{ ...MONO, fontSize: 11, textAlign: 'right', color: clr(r.lq?.dayPct) }}>
-                {r.lq
-                  ? `${r.lq.dayPct >= 0 ? '▲' : '▼'}${Math.abs(r.lq.dayPct).toFixed(2)}%`
-                  : '—'}
-              </span>
-
-              {/* delete */}
-              <span
-                onClick={() => removePos(idx)}
-                title="Remove position"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--neg)', opacity: 0.35, transition: 'opacity 120ms' }}
-                onMouseEnter={e => e.currentTarget.style.opacity = '1'}
-                onMouseLeave={e => e.currentTarget.style.opacity = '0.35'}>
-                <Icon name="x" size={11} />
-              </span>
-
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>{/* /minWidth wrapper */}
-      </div>{/* /overflowX scroll container */}
+        </div>
+
+      )}
 
       {/* ══ add position form ══════════════════════════════ */}
       {showAdd && (

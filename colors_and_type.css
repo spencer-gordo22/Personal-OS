@@ -330,125 +330,139 @@ html, body {
 
 /* ============================================================
    Mobile Responsive  (≤ 768px)
+   Native iPhone app feel — Bloomberg / Robinhood aesthetic
    ============================================================ */
 
-/* Bottom tab bar — hidden on desktop, visible on mobile */
-.sos-bottom-nav {
-  display: none;
-}
+/* Bottom tab bar — hidden on desktop */
+.sos-bottom-nav { display: none; }
 
 @media (max-width: 768px) {
 
-  /* ── Root overflow lock ──────────────────────────────────────────────────── */
+  /* ── Root overflow lock ── */
   #root {
     width: 100%;
     max-width: 100vw;
     overflow-x: hidden;
   }
 
-  /* ── Sidebar hidden on mobile ────────────────────────────────────────────── */
-  .sos-sidebar {
-    display: none !important;
-  }
+  /* ── Sidebar: hidden on mobile ── */
+  .sos-sidebar { display: none !important; }
 
-  /* ── Bottom navigation bar ───────────────────────────────────────────────── */
+  /* ── Native tab bar ───────────────────────────────────────────────────────
+     83px total: ~10px top icon padding + icons + labels + safe area bottom   */
   .sos-bottom-nav {
     display: flex;
     position: fixed;
     bottom: 0; left: 0; right: 0;
-    height: 58px;
-    background: var(--bg-0);
-    border-top: 1px solid var(--border);
+    background: #0A0A0F;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
     z-index: 500;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-around;
-    padding: 0 4px;
-    padding-bottom: env(safe-area-inset-bottom, 0);
+    padding: 10px 4px env(safe-area-inset-bottom, 20px);
   }
 
-  /* Main content gets bottom padding so cards aren't hidden behind tab bar */
+  /* ── Main content ── */
   .sos-main {
-    padding-bottom: 68px !important;
-    /* guarantee the scrolling viewport never overflows horizontally */
+    padding: 0 !important;
+    padding-bottom: 100px !important;
     width: 100% !important;
     max-width: 100vw !important;
     overflow-x: hidden !important;
+    /* Solid dark bg — no dot grid on mobile */
+    background-image: none !important;
+    background-color: var(--bg-1) !important;
   }
 
-  /* ── Grid layouts → single column ───────────────────────────────────────── */
+  /* ── Full-bleed grid: cards edge-to-edge, 8px dark gap between sections ── */
   .sos-dashboard-grid {
     grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 0 !important;
   }
-  /* Every direct grid child MUST be allowed to shrink below its content width */
   .sos-dashboard-grid > div {
     grid-column: span 1 !important;
     min-width: 0;
     width: 100%;
   }
 
-  .sos-module-view > div {
+  .sos-module-view {
     grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 0 !important;
   }
-  .sos-module-view > div > div {
+  .sos-module-view > div {
     grid-column: span 1 !important;
     min-width: 0;
     width: 100%;
   }
 
-  /* ── Typography ──────────────────────────────────────────────────────────── */
-  .sos-page-title {
-    font-size: 20px !important;
-  }
+  /* ── Page-title strip — hidden; topbar + tab labels provide context ── */
+  .sos-page-title-section { display: none !important; }
+  .sos-topbar-cmd         { display: none !important; }
 
-  /* ── Topbar command bar — hidden on mobile ───────────────────────────────── */
-  .sos-topbar-cmd {
-    display: none !important;
-  }
-
-  /* ── Tables / horizontal scroll zones ───────────────────────────────────── */
-  .sos-scroll-x {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  /* ── Cards: hard-constrained to their container ─────────────────────────── */
+  /* ── Cards: full-bleed, no side borders, no radius ── */
   .card {
-    /* Never wider than parent; border-box so border doesn't add width */
     width: 100%;
     max-width: 100%;
     min-width: 0;
-    /* clip any child that still manages to overflow */
     overflow: hidden;
+    border-radius: 0 !important;
+    border-left: none !important;
+    border-right: none !important;
   }
 
   .card-header {
-    /* Prevent long labels from expanding the header beyond card width */
     overflow: hidden;
     min-width: 0;
+    height: 44px;
+    padding: 0 16px;
+  }
+
+  /* Card label: 10px per spec */
+  .card-header .label {
+    font-size: 10px !important;
+    letter-spacing: 0.10em;
   }
 
   .card-body {
-    /* Allow the body to shrink, clip horizontal overflow only */
     width: 100%;
     max-width: 100%;
     min-width: 0;
     overflow-x: hidden;
+    padding: 16px !important;
   }
 
-  /* ── Flex children within cards: allow shrinking ─────────────────────────── */
-  /* Any direct flex child that forgets min-width:0 will be caught here */
   .card-body > div,
   .card-body > span {
     min-width: 0;
   }
+
+  /* ── Typography scaling ── */
+  /* Body text */
+  .card-body { font-size: 13px; }
+
+  /* KPI values: scale down so they still read as hero numbers */
+  .kpi-xl { font-size: 40px; }
+  .kpi-lg { font-size: 28px; }
+  .kpi-md { font-size: 22px; }
+  .kpi-sm { font-size: 18px; }
+
+  /* Radii override at root for any inline border-radius */
+  :root {
+    --r-3: 0px;   /* card base radius */
+    --r-4: 6px;   /* inner elements keep slight rounding */
+  }
+
+  /* ── Horizontal scroll zones (only the inner table scrolls) ── */
+  .sos-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
-/* Desktop: ensure bottom nav never shows */
+/* Desktop: keep sidebar, hide bottom nav */
 @media (min-width: 769px) {
-  .sos-bottom-nav {
-    display: none !important;
-  }
-  .sos-sidebar {
-    display: flex !important;
-  }
+  .sos-bottom-nav { display: none !important; }
+  .sos-sidebar    { display: flex !important; }
 }
