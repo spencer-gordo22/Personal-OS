@@ -66,17 +66,19 @@ function HealthPulse() {
   /* ── auto-sync once on mount if token present ── */
   useEffectHP(() => {
     if (whoopToken && whoopToken.access_token) {
-      syncWhoop(whoopToken.access_token);
+      syncWhoop();
     }
   }, []);
 
-  async function syncWhoop(token) {
+  /* syncWhoop no longer needs a token argument — the server reads from Supabase
+     and auto-refreshes silently if the access token is expired. */
+  async function syncWhoop() {
     setWhoopStatus('syncing');
     setWhoopError('');
     try {
       const [recRes, sleepRes] = await Promise.all([
-        fetch(`/whoop/data?endpoint=recovery&token=${encodeURIComponent(token)}`),
-        fetch(`/whoop/data?endpoint=activity/sleep&token=${encodeURIComponent(token)}`),
+        fetch('/whoop/data?endpoint=recovery'),
+        fetch('/whoop/data?endpoint=activity/sleep'),
       ]);
       if (!recRes.ok || !sleepRes.ok) throw new Error(`HTTP ${recRes.status}/${sleepRes.status}`);
       const recJson   = await recRes.json();
@@ -311,7 +313,7 @@ function HealthPulse() {
                 </div>
                 <div style={{ display: 'flex', gap: 12 }}>
                   <span
-                    onClick={() => syncWhoop(whoopToken.access_token)}
+                    onClick={() => syncWhoop()}
                     style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em' }}>
                     SYNC NOW
                   </span>

@@ -91,10 +91,11 @@ function Cash() {
   const [plaidToken,  setPlaidToken]  = useLocalStorage('sos_plaid_token',    null);
 
   /* ── Plaid state ── */
-  const [plaidStatus,   setPlaidStatus]   = useStateCash('idle'); // idle|connecting|live|error
-  const [plaidError,    setPlaidError]    = useStateCash('');
-  const [showPlaidInfo, setShowPlaidInfo] = useStateCash(false);
-  const [lastPlaidSync, setLastPlaidSync] = useStateCash('');
+  const [plaidStatus,      setPlaidStatus]      = useStateCash('idle'); // idle|connecting|live|error
+  const [plaidError,       setPlaidError]        = useStateCash('');
+  const [plaidNeedsRecon,  setPlaidNeedsRecon]   = useStateCash(false); // ITEM_LOGIN_REQUIRED
+  const [showPlaidInfo,    setShowPlaidInfo]      = useStateCash(false);
+  const [lastPlaidSync,    setLastPlaidSync]      = useStateCash('');
 
   /* ── balance edit ── */
   const [editBal, setEditBal]         = useStateCash(false);
@@ -123,13 +124,20 @@ function Cash() {
   /* ── Plaid helpers ── */
   async function fetchPlaidBalance(token) {
     try {
-      const r = await fetch(`/api/plaid/balance?access_token=${encodeURIComponent(token)}`);
-      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error_message || e.error || `HTTP ${r.status}`); }
-      const data = await r.json();
+      const r    = await fetch(`/api/plaid/balance?access_token=${encodeURIComponent(token)}`);
+      const data = await r.json().catch(() => ({}));
+      /* Detect bank re-authentication required (e.g. password changed) */
+      if (data.reconnect_required || data.error_code === 'ITEM_LOGIN_REQUIRED') {
+        setPlaidNeedsRecon(true);
+        setPlaidError('');   // clear generic error; reconnect UI handles messaging
+        return;
+      }
+      if (!r.ok) throw new Error(data.error_message || data.error || `HTTP ${r.status}`);
       const acct = (data.accounts || []).find(a => a.type === 'depository') || data.accounts?.[0];
       if (acct?.balances?.current != null) {
         setCashData(s => ({ ...s, balance: Math.round(acct.balances.current) }));
       }
+      setPlaidNeedsRecon(false);
     } catch (e) {
       setPlaidError(e.message);
     }
@@ -137,9 +145,12 @@ function Cash() {
 
   async function fetchPlaidTransactions(token) {
     try {
-      const r = await fetch(`/api/plaid/transactions?access_token=${encodeURIComponent(token)}`);
-      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error_message || e.error || `HTTP ${r.status}`); }
-      const data = await r.json();
+      const r    = await fetch(`/api/plaid/transactions?access_token=${encodeURIComponent(token)}`);
+      const data = await r.json().catch(() => ({}));
+      if (data.reconnect_required || data.error_code === 'ITEM_LOGIN_REQUIRED') {
+        setPlaidNeedsRecon(true); return;
+      }
+      if (!r.ok) throw new Error(data.error_message || data.error || `HTTP ${r.status}`);
       const txList = (data.transactions || []).slice(0, 25).map(t => ({
         id:     t.transaction_id,
         time:   t.date,
@@ -153,7 +164,7 @@ function Cash() {
   }
 
   async function connectPlaid() {
-    setPlaidStatus('connecting'); setPlaidError('');
+    setPlaidStatus('connecting'); setPlaidError(''); setPlaidNeedsRecon(false);
     try {
       /* 1. get link token */
       const cfg = await fetch('/api/plaid/config').then(r => r.json()).catch(() => ({}));
@@ -326,11 +337,25 @@ function Cash() {
               {plaidStatus === 'connecting' ? 'Connecting…' : 'Connect Bank'}
             </button>
           ) : (
-            <span onClick={() => { setPlaidToken(null); setPlaidStatus('idle'); setPlaidError(''); }}
-              title="Disconnect Plaid"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', cursor: 'pointer', letterSpacing: '0.06em' }}>
-              DISCONNECT
-            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+              {/* status dot */}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: plaidNeedsRecon ? 'var(--neg)'
+                            : plaidStatus === 'connecting' ? 'var(--warn)'
+                            : 'var(--pos)',
+                  boxShadow: (!plaidNeedsRecon && plaidStatus !== 'connecting')
+                               ? '0 0 6px var(--pos)' : 'none',
+                  display: 'inline-block', transition: 'background 400ms',
+                }} />
+                <span onClick={() => { setPlaidToken(null); setPlaidStatus('idle'); setPlaidError(''); setPlaidNeedsRecon(false); }}
+                  title="Disconnect Plaid"
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+                  DISCONNECT
+                </span>
+              </span>
+            </div>
           )}
           {plaidError && (
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)', maxWidth: 160, textAlign: 'right' }}>
@@ -340,8 +365,35 @@ function Cash() {
         </div>
       </div>
 
+      {/* ── Plaid reconnect banner — shown when bank login expired ── */}
+      {isPlaidConnected && plaidNeedsRecon && (
+        <div style={{
+          marginTop: 10, padding: '10px 12px',
+          background: 'rgba(255,200,0,0.07)', border: '1px solid rgba(255,200,0,0.35)',
+          borderRadius: 4,
+        }}>
+          <div style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--warn)', fontWeight: 500, marginBottom: 6 }}>
+            Bank re-authentication required
+          </div>
+          <div style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55, marginBottom: 10 }}>
+            Your bank login credentials changed (e.g. new password). Your Plaid connection is still valid — you just need to confirm your identity again. No data is lost.
+          </div>
+          <button
+            onClick={() => { setPlaidToken(null); setPlaidNeedsRecon(false); connectPlaid(); }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'var(--bg-3)', border: '1px solid var(--warn)',
+              borderRadius: 4, padding: '6px 12px', cursor: 'pointer',
+              color: 'var(--warn)', fontFamily: 'var(--font-sans)', fontSize: 11, fontWeight: 500,
+            }}>
+            <Icon name="rotate-cw" size={13} />
+            Reconnect Bank
+          </button>
+        </div>
+      )}
+
       {/* ── Plaid setup guide — shown when not configured or not connected ── */}
-      {!isPlaidConnected && (
+      {!isPlaidConnected && !plaidNeedsRecon && (
         <PlaidSetupGuide error={plaidError} />
       )}
 

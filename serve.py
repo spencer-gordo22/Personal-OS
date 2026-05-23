@@ -84,12 +84,32 @@ WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout'
 # Always use the Fly.io URL; local OAuth won't work (WHOOP requires HTTPS).
 WHOOP_REDIRECT = 'https://spencer-os.fly.dev/whoop/callback'
 
+# WHOOP client credentials — stored server-side for token refresh without client involvement.
+# Either set these as Fly secrets OR leave empty; the server will fall back to reading
+# them from the Supabase kv_store (where the client already saves them).
+WHOOP_CLIENT_ID     = os.environ.get('WHOOP_CLIENT_ID',     '').strip()
+WHOOP_CLIENT_SECRET = os.environ.get('WHOOP_CLIENT_SECRET', '').strip()
+
+# Google Calendar OAuth — server-side authorization code flow.
+# Redirect URI must be added to "Authorized redirect URIs" in Google Cloud Console.
+GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID',     '').strip()
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '').strip()
+GOOGLE_REDIRECT      = os.environ.get('GOOGLE_REDIRECT',
+                           'https://spencer-os.fly.dev/google/callback').strip()
+GOOGLE_AUTH_URL  = 'https://accounts.google.com/o/oauth2/v2/auth'
+GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+GOOGLE_SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly'
+
 # ── WHOOP OAuth state store ──────────────────────────────────────────────────
 # Keyed by a random UUID generated per auth attempt. Validated on callback.
 # In-memory only; clears on restart (fine — state tokens are short-lived).
 _WHOOP_STATES:      dict  = {}
 _WHOOP_STATES_LOCK        = threading.Lock()
 _WHOOP_STATE_TTL:   float = 600.0   # 10 minutes
+
+_GOOGLE_STATES:     dict  = {}
+_GOOGLE_STATES_LOCK       = threading.Lock()
+_GOOGLE_STATE_TTL:  float = 600.0   # 10 minutes
 
 DEFAULT_SYMBOLS = ['QQQ', 'GLD', 'VOO', 'ETN']
 
@@ -217,6 +237,188 @@ def _start_daily_push_scheduler() -> None:
                 url='/',
             )
     threading.Thread(target=_loop, daemon=True, name='push-scheduler').start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Supabase kv_store helpers  (server-side token persistence)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _supa_kv_get(key: str):
+    """Read a value from Supabase kv_store. Returns parsed Python object or None."""
+    if not SUPA_URL or not SUPA_KEY:
+        return None
+    url = (f'{SUPA_URL}/rest/v1/kv_store'
+           f'?key=eq.{urllib.parse.quote(key)}&select=value&limit=1')
+    req = urllib.request.Request(url, headers={
+        'apikey':        SUPA_KEY,
+        'Authorization': f'Bearer {SUPA_KEY}',
+        'Accept':        'application/json',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rows = json.loads(r.read().decode())
+            if rows:
+                return rows[0]['value']
+    except Exception as e:
+        print(f'[kv get] {key}: {e}')
+    return None
+
+
+def _supa_kv_set(key: str, value) -> bool:
+    """Upsert a value in Supabase kv_store. Returns True on success."""
+    if not SUPA_URL or not SUPA_KEY:
+        return False
+    body = json.dumps({
+        'key':        key,
+        'value':      value,
+        'updated_at': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }).encode()
+    req = urllib.request.Request(
+        f'{SUPA_URL}/rest/v1/kv_store', data=body, method='POST',
+        headers={
+            'apikey':        SUPA_KEY,
+            'Authorization': f'Bearer {SUPA_KEY}',
+            'Content-Type':  'application/json',
+            'Prefer':        'resolution=merge-duplicates,return=minimal',
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status in (200, 201, 204)
+    except Exception as e:
+        print(f'[kv set] {key}: {e}')
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Calendar OAuth helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _google_exchange_code(code: str) -> dict:
+    """Exchange authorization code for access + refresh tokens."""
+    post_data = urllib.parse.urlencode({
+        'code':          code,
+        'client_id':     GOOGLE_CLIENT_ID,
+        'client_secret': GOOGLE_CLIENT_SECRET,
+        'redirect_uri':  GOOGLE_REDIRECT,
+        'grant_type':    'authorization_code',
+    }).encode()
+    req = urllib.request.Request(
+        GOOGLE_TOKEN_URL, data=post_data, method='POST',
+        headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode())
+
+
+def _google_refresh_access_token(refresh_token: str) -> dict:
+    """Use refresh token to get a new access token."""
+    post_data = urllib.parse.urlencode({
+        'client_id':     GOOGLE_CLIENT_ID,
+        'client_secret': GOOGLE_CLIENT_SECRET,
+        'refresh_token': refresh_token,
+        'grant_type':    'refresh_token',
+    }).encode()
+    req = urllib.request.Request(
+        GOOGLE_TOKEN_URL, data=post_data, method='POST',
+        headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode())
+
+
+def _google_get_valid_token(force_refresh: bool = False) -> 'str | None':
+    """
+    Read Google tokens from Supabase kv_store; auto-refresh if expired or
+    within 5 minutes of expiry (or forced).  Returns a valid access_token
+    string or None if not connected. Raises ValueError if refresh fails.
+    """
+    tokens = _supa_kv_get('sos_gcal_tokens')
+    if not tokens or not isinstance(tokens, dict):
+        return None
+
+    refresh_token = tokens.get('refresh_token')
+    access_token  = tokens.get('access_token')
+    expires_at    = tokens.get('expires_at', 0)
+
+    # expires_at is stored in ms (matches client-side Date.now() convention)
+    exp_sec = expires_at / 1000 if expires_at > 1e10 else float(expires_at)
+    now_sec = time.time()
+
+    if force_refresh or not access_token or (exp_sec - now_sec) < 300:
+        if not refresh_token:
+            return None
+        print(f'[google] {"forced" if force_refresh else "proactive"} token refresh…')
+        refreshed = _google_refresh_access_token(refresh_token)
+        if 'error' in refreshed:
+            desc = refreshed.get('error_description') or refreshed.get('error')
+            raise ValueError(f'Google refresh error: {desc}')
+        access_token           = refreshed['access_token']
+        tokens['access_token'] = access_token
+        tokens['expires_at']   = int((now_sec + refreshed.get('expires_in', 3600)) * 1000)
+        _supa_kv_set('sos_gcal_tokens', tokens)
+        print('[google] token refreshed and saved to Supabase')
+
+    return access_token
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHOOP server-side refresh helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _whoop_get_token() -> 'dict | None':
+    """Read WHOOP token dict from Supabase kv_store."""
+    return _supa_kv_get('sos_whoop_token')
+
+
+def _whoop_api_call(endpoint: str, access_token: str) -> bytes:
+    """Make a single WHOOP API call; returns raw response bytes."""
+    req = urllib.request.Request(
+        f'{WHOOP_API_BASE}/{endpoint}?limit=1',
+        headers={'Authorization': f'Bearer {access_token}', 'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return r.read()
+
+
+def _whoop_refresh(token_data: dict) -> dict:
+    """
+    Use the stored refresh_token to obtain new WHOOP tokens.
+    Client credentials are read from env vars → Supabase kv_store fallback.
+    Saves updated token to Supabase. Returns new token dict.
+    """
+    refresh_token = token_data.get('refresh_token', '').strip()
+    if not refresh_token:
+        raise ValueError('No WHOOP refresh_token stored — please reconnect')
+
+    cid = WHOOP_CLIENT_ID
+    sec = WHOOP_CLIENT_SECRET
+    if not cid:
+        raw = _supa_kv_get('sos_whoop_client_id')
+        cid = raw if isinstance(raw, str) else ''
+    if not sec:
+        raw = _supa_kv_get('sos_whoop_client_secret')
+        sec = raw if isinstance(raw, str) else ''
+    if not cid or not sec:
+        raise ValueError('WHOOP client credentials unavailable for token refresh')
+
+    post_data = urllib.parse.urlencode({
+        'grant_type':    'refresh_token',
+        'refresh_token': refresh_token,
+        'client_id':     cid,
+        'client_secret': sec,
+    }).encode()
+    req = urllib.request.Request(
+        WHOOP_TOKEN_URL, data=post_data, method='POST',
+        headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        new_tok = json.loads(r.read().decode())
+
+    # Preserve refresh_token if WHOOP doesn't return a new one
+    if not new_tok.get('refresh_token'):
+        new_tok['refresh_token'] = refresh_token
+    new_tok['fetched_at'] = int(time.time() * 1000)  # ms — matches client convention
+
+    _supa_kv_set('sos_whoop_token', new_tok)
+    print('[whoop] token refreshed and saved to Supabase')
+    return new_tok
+
 
 UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
@@ -544,6 +746,11 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/whoop/auth'):            self._whoop_auth()
         elif p.startswith('/whoop/callback'):        self._whoop_callback()
         elif p.startswith('/whoop/data'):            self._whoop_data()
+        elif p.startswith('/whoop/status'):          self._whoop_status()
+        elif p.startswith('/google/auth'):           self._google_auth()
+        elif p.startswith('/google/callback'):       self._google_callback()
+        elif p.startswith('/google/events'):         self._google_events()
+        elif p.startswith('/google/status'):         self._google_status()
         elif p.startswith('/telegram/set-webhook'):  self._tg_set_webhook()
         else:                                        super().do_GET()
 
@@ -554,6 +761,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/api/plaid/exchange-token'): self._plaid_exchange_token()
         elif p.startswith('/api/push/subscribe'):       self._push_subscribe()
         elif p.startswith('/api/push/send'):            self._push_send()
+        elif p.startswith('/google/disconnect'):        self._google_disconnect()
         elif p.startswith('/telegram/webhook'):         self._telegram_webhook()
         else:                                           self.send_error(404)
 
@@ -747,6 +955,13 @@ try{{
             self._json_error(e.code, e.read().decode()); return
         except Exception as e:
             self._json_error(502, str(e)); return
+        # Persist token server-side so _whoop_data can auto-refresh without the client
+        try:
+            tok = json.loads(body.decode())
+            tok['fetched_at'] = int(time.time() * 1000)  # ms — matches client convention
+            _supa_kv_set('sos_whoop_token', tok)
+        except Exception as save_e:
+            print(f'[whoop token] Supabase save failed (non-fatal): {save_e}')
         self.send_response(200)
         self.send_header('Content-Type',   'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -756,25 +971,56 @@ try{{
     def _whoop_data(self):
         qs       = parse_qs(urlparse(self.path).query)
         endpoint = qs.get('endpoint', [''])[0].strip()
-        token    = qs.get('token',    [''])[0].strip()
         ALLOWED  = {'recovery', 'activity/sleep', 'activity/workout', 'cycle'}
         if endpoint not in ALLOWED:
             self._json_error(400, f'endpoint must be one of {ALLOWED}'); return
-        if not token:
-            self._json_error(401, 'Missing token'); return
-        req = urllib.request.Request(f'{WHOOP_API_BASE}/{endpoint}?limit=1',
-                  headers={'Authorization': f'Bearer {token}', 'User-Agent': UA})
+
+        # Prefer Supabase-stored token for auto-refresh capability;
+        # fall back to query-param token for backwards compatibility.
+        token_data   = _whoop_get_token()
+        access_token = token_data.get('access_token', '') if token_data else ''
+        if not access_token:
+            access_token = qs.get('token', [''])[0].strip()
+        if not access_token:
+            self._json_error(401, 'WHOOP not connected — reconnect via Health Pulse'); return
+
         try:
-            with urllib.request.urlopen(req, timeout=10) as r: body = r.read()
+            body = _whoop_api_call(endpoint, access_token)
         except urllib.request.HTTPError as e:
-            self._json_error(e.code, e.read().decode()); return
+            if e.code == 401 and token_data:
+                # Silent refresh + retry — never show an expiry error to the user
+                try:
+                    print(f'[whoop] 401 on {endpoint} — refreshing token silently…')
+                    new_td = _whoop_refresh(token_data)
+                    body   = _whoop_api_call(endpoint, new_td['access_token'])
+                except Exception as ref_e:
+                    self._json_error(401, f'WHOOP refresh failed: {ref_e}'); return
+            else:
+                self._json_error(e.code, e.read().decode()); return
         except Exception as e:
             self._json_error(502, str(e)); return
+
         self.send_response(200)
         self.send_header('Content-Type',   'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _whoop_status(self):
+        """Return WHOOP connection status based on Supabase kv_store token."""
+        tok = _whoop_get_token()
+        if not tok or not tok.get('access_token'):
+            self._json({'connected': False}); return
+        fetched_at  = tok.get('fetched_at', 0)
+        expires_in  = tok.get('expires_in', 0)
+        # fetched_at is in ms
+        fetched_sec = fetched_at / 1000 if fetched_at > 1e10 else fetched_at
+        expires_at  = fetched_sec + expires_in
+        self._json({
+            'connected':  True,
+            'expires_at': int(expires_at * 1000),     # ms for client
+            'expired':    expires_at < time.time(),
+        })
 
     # ── Telegram webhook ──────────────────────────────────────────────────────
 
@@ -1017,7 +1263,15 @@ try{{
             self.end_headers()
             self.wfile.write(body)
         except urllib.request.HTTPError as e:
-            self._json_error(e.code, e.read().decode())
+            raw = e.read().decode()
+            try:
+                err = json.loads(raw)
+                if err.get('error_code') == 'ITEM_LOGIN_REQUIRED':
+                    self._json({'reconnect_required': True,
+                                'error_code': 'ITEM_LOGIN_REQUIRED',
+                                'error': 'Bank login expired — please reconnect'}); return
+            except Exception: pass
+            self._json_error(e.code, raw)
         except Exception as e:
             self._json_error(502, str(e))
 
@@ -1044,9 +1298,183 @@ try{{
             self.end_headers()
             self.wfile.write(body)
         except urllib.request.HTTPError as e:
-            self._json_error(e.code, e.read().decode())
+            raw = e.read().decode()
+            try:
+                err = json.loads(raw)
+                if err.get('error_code') == 'ITEM_LOGIN_REQUIRED':
+                    self._json({'reconnect_required': True,
+                                'error_code': 'ITEM_LOGIN_REQUIRED',
+                                'error': 'Bank login expired — please reconnect'}); return
+            except Exception: pass
+            self._json_error(e.code, raw)
         except Exception as e:
             self._json_error(502, str(e))
+
+    # ── Google Calendar ───────────────────────────────────────────────────────
+
+    def _google_auth(self):
+        if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+            self._json_error(503, (
+                'Google OAuth not configured — '
+                'set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET as Fly secrets'
+            )); return
+        state = str(uuid.uuid4())
+        now   = time.time()
+        with _GOOGLE_STATES_LOCK:
+            expired = [k for k, ts in _GOOGLE_STATES.items()
+                       if now - ts > _GOOGLE_STATE_TTL]
+            for k in expired:
+                del _GOOGLE_STATES[k]
+            _GOOGLE_STATES[state] = now
+        params = urllib.parse.urlencode({
+            'client_id':     GOOGLE_CLIENT_ID,
+            'redirect_uri':  GOOGLE_REDIRECT,
+            'response_type': 'code',
+            'scope':         GOOGLE_SCOPE,
+            'access_type':   'offline',
+            'prompt':        'consent',        # always force consent to get refresh_token
+            'state':         state,
+        })
+        print(f'[google auth] redirect → {GOOGLE_REDIRECT}  state={state[:8]}…')
+        self.send_response(302)
+        self.send_header('Location', f'{GOOGLE_AUTH_URL}?{params}')
+        self.end_headers()
+
+    def _google_callback(self):
+        qs    = parse_qs(urlparse(self.path).query)
+        code  = qs.get('code',  [''])[0]
+        err   = qs.get('error', [''])[0]
+        state = qs.get('state', [''])[0]
+
+        fail_msg = ''
+        if err:
+            fail_msg = f'Google returned an error: {err}'
+        elif state:
+            with _GOOGLE_STATES_LOCK:
+                ts = _GOOGLE_STATES.pop(state, None)
+            if ts is None:
+                fail_msg = ('OAuth state mismatch — please try connecting again '
+                            '(the link may have expired).')
+                print(f'[google callback] invalid_state: {state[:8]}…')
+            elif time.time() - ts > _GOOGLE_STATE_TTL:
+                fail_msg = 'OAuth state expired — please reconnect.'
+
+        if not fail_msg and not code:
+            fail_msg = 'No authorization code received from Google.'
+
+        if not fail_msg:
+            try:
+                tokens     = _google_exchange_code(code)
+                expires_in = tokens.get('expires_in', 3600)
+                tokens['expires_at'] = int((time.time() + expires_in) * 1000)  # ms
+                _supa_kv_set('sos_gcal_tokens', tokens)
+                print('[google callback] tokens saved to Supabase kv_store')
+                success = True
+            except Exception as exc:
+                print(f'[google callback] token exchange failed: {exc}')
+                fail_msg = str(exc)
+                success  = False
+        else:
+            success = False
+
+        if success:
+            redirect_html = '  setTimeout(() => window.location.href = "/", 800);'
+            msg_txt  = '✓ Google Calendar connected! Redirecting…'
+            err_html = ''
+        else:
+            redirect_html = ''
+            msg_txt  = 'Connection failed'
+            err_html = (f'{fail_msg}<br><br>'
+                        f'<a href="/">← Back to dashboard</a>')
+
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Google Calendar</title>
+<style>body{{background:#001218;color:#8EB8C8;font-family:monospace;font-size:13px;
+display:flex;flex-direction:column;align-items:center;justify-content:center;
+height:100vh;margin:0;gap:12px;}}
+#msg{{color:#00D4FF;letter-spacing:.08em;}}
+#err{{color:#FF4D6D;max-width:480px;text-align:center;line-height:1.6;}}
+a{{color:#00D4FF;text-decoration:none;}}</style></head><body>
+<div id="msg">{msg_txt}</div>
+<div id="err">{err_html}</div>
+<script>{redirect_html}</script>
+</body></html>"""
+        body = html.encode()
+        self.send_response(200)
+        self.send_header('Content-Type',   'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _google_events(self):
+        """Proxy Google Calendar events with automatic token refresh."""
+        try:
+            access_token = _google_get_valid_token()
+        except Exception as e:
+            self._json_error(401, str(e)); return
+        if not access_token:
+            self._json_error(401, 'Not connected to Google Calendar'); return
+
+        qs      = parse_qs(urlparse(self.path).query)
+        now_iso = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+        max_iso = (datetime.datetime.utcnow() +
+                   datetime.timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        cal_params = urllib.parse.urlencode({
+            'timeMin':      qs.get('timeMin',     [now_iso])[0],
+            'timeMax':      qs.get('timeMax',     [max_iso])[0],
+            'singleEvents': 'true',
+            'orderBy':      'startTime',
+            'maxResults':   qs.get('maxResults',  ['25'])[0],
+        })
+
+        def _fetch(tok):
+            r = urllib.request.Request(
+                f'https://www.googleapis.com/calendar/v3/calendars/primary/events?{cal_params}',
+                headers={'Authorization': f'Bearer {tok}', 'User-Agent': UA})
+            with urllib.request.urlopen(r, timeout=15) as resp:
+                return resp.read()
+
+        try:
+            body = _fetch(access_token)
+        except urllib.request.HTTPError as e:
+            if e.code == 401:
+                # Force refresh and retry once
+                try:
+                    access_token = _google_get_valid_token(force_refresh=True)
+                    body = _fetch(access_token)
+                except Exception as ref_e:
+                    self._json_error(401, f'Google Calendar reconnection required: {ref_e}')
+                    return
+            else:
+                self._json_error(e.code, e.read().decode()); return
+        except Exception as e:
+            self._json_error(502, str(e)); return
+
+        self.send_response(200)
+        self.send_header('Content-Type',   'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _google_status(self):
+        """Return Google Calendar connection status."""
+        tokens = _supa_kv_get('sos_gcal_tokens')
+        if not tokens or not isinstance(tokens, dict) or not tokens.get('access_token'):
+            self._json({'connected': False}); return
+        expires_at  = tokens.get('expires_at', 0)
+        exp_sec     = expires_at / 1000 if expires_at > 1e10 else float(expires_at)
+        has_refresh = bool(tokens.get('refresh_token'))
+        self._json({
+            'connected':   True,
+            'has_refresh': has_refresh,
+            'expires_at':  expires_at,
+            'will_refresh': has_refresh,          # always auto-refreshes if refresh_token present
+        })
+
+    def _google_disconnect(self):
+        """Clear Google tokens from Supabase kv_store."""
+        _supa_kv_set('sos_gcal_tokens', None)
+        self._json({'ok': True})
 
     # ── helper ───────────────────────────────────────────────────────────────
 
