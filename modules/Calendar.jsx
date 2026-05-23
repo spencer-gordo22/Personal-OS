@@ -5,6 +5,13 @@ const { useState: useStateCal, useEffect: useEffectCal } = React;
 const GCAL_SCOPE      = 'https://www.googleapis.com/auth/calendar.readonly';
 const GCAL_DEFAULT_ID = '573874320221-npgs5l5reilr5mop4s7ugk3hes69gsap.apps.googleusercontent.com';
 
+/* These origins MUST all be listed in Google Cloud Console →
+   Credentials → your OAuth Client → Authorized JavaScript origins */
+const REQUIRED_ORIGINS = [
+  'https://spencer-os.fly.dev',
+  'http://localhost:8765',
+];
+
 /* Google Calendar colorId → display color */
 const GCAL_COLORS = {
   1: '#7986CB',         // lavender
@@ -29,7 +36,6 @@ function todayMetaStr() {
   return `${MONTH_ABBR[d.getMonth()]} ${d.getDate()}`;
 }
 
-/* Format event start for time column */
 function fmtStart(start, allDay) {
   if (!start) return '';
   if (allDay) return 'ALL DAY';
@@ -41,7 +47,6 @@ function fmtStart(start, allDay) {
   return isToday ? `${h}:${m}` : `${DAYS_ABBR[d.getDay()]} ${h}:${m}`;
 }
 
-/* Day group header label */
 function dayLabel(start, allDay) {
   const d = allDay ? new Date(start + 'T12:00:00') : new Date(start);
   const today = new Date();
@@ -97,10 +102,19 @@ function Calendar() {
   const [status,    setStatus]    = useStateCal('idle');   // idle|connecting|loading|live|error
   const [errMsg,    setErrMsg]    = useStateCal('');
   const [idInput,   setIdInput]   = useStateCal('');
-  const [showSetup, setShowSetup] = useStateCal(false);
+  const [showSteps, setShowSteps] = useStateCal(false);
+  const [supaReady, setSupaReady] = useStateCal(false);
+  const [idSaved,   setIdSaved]   = useStateCal(false);
 
   const isConnected = Boolean(token && token.expires_at > Date.now());
   const isExpired   = Boolean(token && token.expires_at <= Date.now());
+
+  /* ── await Supabase ready before allowing connect ── */
+  useEffectCal(() => {
+    (window._supaReady || Promise.resolve(window._supa || null))
+      .then(() => setSupaReady(true))
+      .catch(() => setSupaReady(true)); // still allow connect even if Supabase fails
+  }, []);
 
   /* ── fetch events ──────────────────────────── */
   async function fetchEvents(accessToken) {
@@ -143,22 +157,20 @@ function Calendar() {
 
   /* ── on mount: auto-load if token valid ── */
   useEffectCal(() => {
-    if (isConnected) {
-      fetchEvents(token.access_token);
-    }
-  }, []); // intentionally run once on mount
+    if (isConnected) fetchEvents(token.access_token);
+  }, []); // intentionally run once
 
   /* effective client ID — always falls back to the hardcoded default */
   const effectiveId = (clientId || GCAL_DEFAULT_ID).trim();
 
   /* ── OAuth connect ─────────────────────────── */
   async function connect() {
-    const id = effectiveId;
+    const id     = effectiveId;
     const origin = window.location.origin;
     console.log('[Calendar] OAuth connect — client_id:', id);
     console.log('[Calendar] OAuth connect — window.location.origin:', origin);
-    console.log('[Calendar] This origin MUST be listed in Authorized JavaScript origins for the above Client ID in Google Cloud Console.');
-    if (!id) { setShowSetup(true); return; }
+    console.log('[Calendar] This origin MUST be listed in Authorized JavaScript origins in Google Cloud Console.');
+    if (!id) return;
     setStatus('connecting');
     setErrMsg('');
     try {
@@ -203,8 +215,15 @@ function Calendar() {
     if (!id) return;
     setClientId(id);
     setIdInput('');
-    setShowSetup(false);
+    setIdSaved(true);
+    setTimeout(() => setIdSaved(false), 2000);
   }
+
+  /* ── build all origins to show (current + required, deduped) ── */
+  const currentOrigin = window.location.origin;
+  const allOrigins = [currentOrigin, ...REQUIRED_ORIGINS].filter(
+    (o, i, a) => a.indexOf(o) === i
+  );
 
   /* ── group events by day for rendering ── */
   const grouped = [];
@@ -227,25 +246,28 @@ function Calendar() {
     error:      todayMetaStr(),
   }[status] ?? todayMetaStr();
 
+  const inputSt = {
+    background: 'var(--bg-3)', border: '1px solid var(--border-strong)',
+    borderRadius: 2, padding: '4px 8px', color: 'var(--fg-1)',
+    fontFamily: 'var(--font-mono)', fontSize: 10, outline: 'none',
+  };
+
   /* ════════════════════════════════ render */
   return (
     <Card icon="calendar-days" label="calendar · today" meta={metaTxt}
       action={
         isConnected ? (
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {/* live dot */}
             <span style={{
               width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
               background: status === 'live' ? 'var(--pos)' : status === 'loading' ? 'var(--accent)' : 'var(--warn)',
               boxShadow: status === 'live' ? '0 0 6px var(--pos)' : 'none',
               display: 'inline-block', transition: 'background 400ms',
             }} />
-            {/* refresh */}
             <span onClick={() => fetchEvents(token.access_token)} title="Refresh events"
               style={{ cursor: 'pointer', color: 'var(--fg-3)', display: 'flex', alignItems: 'center' }}>
               <Icon name="refresh-cw" size={12} />
             </span>
-            {/* disconnect */}
             <span onClick={disconnect} title="Disconnect Google Calendar"
               style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'flex', alignItems: 'center' }}>
               <Icon name="unplug" size={12} />
@@ -258,116 +280,144 @@ function Calendar() {
       {!isConnected && (
         <div>
 
-          {/* setup instructions panel */}
-          {showSetup && (
+          {/* ── Client ID field — always visible ── */}
+          <div style={{
+            marginBottom: 10, padding: '10px 12px',
+            background: 'var(--bg-0)', border: '1px solid var(--border)',
+            borderRadius: 4,
+          }}>
             <div style={{
-              marginBottom: 14, padding: '12px 14px',
-              background: 'var(--bg-0)', border: '1px solid var(--border)',
-              borderRadius: 4,
+              fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)',
+              letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6,
             }}>
-              <div style={{
-                fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)',
-                letterSpacing: '0.1em', marginBottom: 10,
-              }}>
-                GOOGLE CALENDAR SETUP
-              </div>
-              {/* current origin info box */}
-              <div style={{
-                marginBottom: 10, padding: '7px 10px',
-                background: 'rgba(0,212,255,0.07)', border: '1px solid rgba(0,212,255,0.25)',
-                borderRadius: 3,
-              }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.1em', marginBottom: 3 }}>
-                  CURRENT ORIGIN (add this to Google Cloud)
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent)', wordBreak: 'break-all' }}>
-                  {window.location.origin}
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.1em', marginTop: 8, marginBottom: 3 }}>
-                  CURRENT CLIENT ID
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-2)', wordBreak: 'break-all' }}>
-                  {effectiveId}
-                </div>
-              </div>
-
-              <ol style={{ margin: '0 0 12px', paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {[
-                  <>Go to <span style={{ color: 'var(--accent)' }}>console.cloud.google.com</span> → your project</>,
-                  <>APIs & Services → Library → enable <strong>Google Calendar API</strong></>,
-                  <>Credentials → your OAuth 2.0 Client ID → Edit</>,
-                  <>Under <strong>Authorized JavaScript origins</strong> add the origin shown above</>,
-                  <>Save, wait ~5 min for Google to propagate, then connect</>,
-                  <>If using a new Client ID, paste it below and hit SAVE</>,
-                ].map((step, i) => (
-                  <li key={i} style={{
-                    fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)',
-                    lineHeight: 1.55,
-                  }}>
-                    {step}
-                  </li>
-                ))}
-              </ol>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input
-                  autoFocus
-                  value={idInput}
-                  onChange={e => setIdInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') saveClientId(); if (e.key === 'Escape') setShowSetup(false); }}
-                  placeholder="xxxxxxxx.apps.googleusercontent.com"
-                  style={{
-                    flex: 1, background: 'var(--bg-3)', border: '1px solid var(--border-strong)',
-                    borderRadius: 2, padding: '4px 8px', color: 'var(--fg-1)',
-                    fontFamily: 'var(--font-mono)', fontSize: 10, outline: 'none',
-                  }}
-                />
-                <span onClick={saveClientId}
-                  style={{
-                    fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)',
-                    cursor: 'pointer', letterSpacing: '0.06em', flexShrink: 0,
-                  }}>
-                  SAVE
-                </span>
-              </div>
+              GOOGLE OAUTH CLIENT ID
             </div>
-          )}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                value={idInput}
+                onChange={e => { setIdInput(e.target.value); setIdSaved(false); }}
+                onKeyDown={e => { if (e.key === 'Enter') saveClientId(); }}
+                placeholder={effectiveId}
+                style={{ ...inputSt, flex: 1, fontSize: 10 }}
+              />
+              <span
+                onClick={saveClientId}
+                style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  color: idSaved ? 'var(--pos)' : 'var(--accent)',
+                  cursor: 'pointer', letterSpacing: '0.06em', flexShrink: 0,
+                  transition: 'color 200ms',
+                }}>
+                {idSaved ? '✓ SAVED' : 'SAVE'}
+              </span>
+            </div>
+            {/* show active client ID below the input */}
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)',
+              marginTop: 5, wordBreak: 'break-all', lineHeight: 1.4,
+            }}>
+              active: <span style={{ color: 'var(--fg-2)' }}>{effectiveId}</span>
+            </div>
+          </div>
 
-          {/* connect button */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '18px 0' }}>
+          {/* ── Authorized origins — both current and fly.dev ── */}
+          <div style={{
+            marginBottom: 10, padding: '10px 12px',
+            background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.2)',
+            borderRadius: 4,
+          }}>
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)',
+              letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 7,
+            }}>
+              ADD ALL OF THESE TO AUTHORIZED JAVASCRIPT ORIGINS
+            </div>
+            {allOrigins.map(origin => (
+              <div key={origin} style={{
+                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4,
+              }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', wordBreak: 'break-all' }}>
+                  {origin}
+                </span>
+                {origin === currentOrigin && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'var(--fg-4)', flexShrink: 0 }}>
+                    ← current
+                  </span>
+                )}
+              </div>
+            ))}
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', marginTop: 6, lineHeight: 1.5 }}>
+              Google Cloud Console → Credentials → OAuth 2.0 Client → Edit → Authorized JavaScript origins
+            </div>
+          </div>
+
+          {/* ── connect button ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '14px 0 8px' }}>
             {isExpired && (
               <div style={{
                 fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--warn)',
-                letterSpacing: '0.06em', textTransform: 'uppercase',
+                letterSpacing: '0.06em',
               }}>
                 Session expired — please reconnect
               </div>
             )}
             <button
               onClick={connect}
-              disabled={status === 'connecting'}
+              disabled={!supaReady || status === 'connecting'}
+              title={!supaReady ? 'Waiting for Supabase to initialise…' : ''}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
                 background: 'var(--bg-3)', border: '1px solid var(--border-strong)',
-                borderRadius: 4, padding: '9px 18px', cursor: status === 'connecting' ? 'default' : 'pointer',
+                borderRadius: 4, padding: '9px 18px',
+                cursor: (!supaReady || status === 'connecting') ? 'default' : 'pointer',
+                opacity: !supaReady ? 0.5 : 1,
                 color: 'var(--fg-1)', fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 500,
-                transition: 'border-color 120ms',
+                transition: 'border-color 120ms, opacity 200ms',
               }}
-              onMouseEnter={e => { if (status !== 'connecting') e.currentTarget.style.borderColor = 'var(--accent)'; }}
+              onMouseEnter={e => { if (supaReady && status !== 'connecting') e.currentTarget.style.borderColor = 'var(--accent)'; }}
               onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-strong)'}
             >
               <Icon name="calendar-days" size={15} />
-              {status === 'connecting' ? 'Connecting…' : 'Connect Google Calendar'}
+              {status === 'connecting' ? 'Connecting…' : !supaReady ? 'Initialising…' : 'Connect Google Calendar'}
             </button>
 
+            {/* show/hide setup steps */}
             <span
-              onClick={() => setShowSetup(s => !s)}
+              onClick={() => setShowSteps(s => !s)}
               style={{
                 fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)',
                 cursor: 'pointer', letterSpacing: '0.06em', textTransform: 'uppercase',
               }}>
-              {showSetup ? 'HIDE SETUP' : 'SETUP / CHANGE CLIENT ID'}
+              {showSteps ? 'HIDE STEPS' : 'SHOW SETUP STEPS'}
             </span>
           </div>
+
+          {/* ── step-by-step instructions (collapsed by default) ── */}
+          {showSteps && (
+            <div style={{
+              marginTop: 4, marginBottom: 10, padding: '10px 12px',
+              background: 'var(--bg-0)', border: '1px solid var(--border)',
+              borderRadius: 4,
+            }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', letterSpacing: '0.1em', marginBottom: 8 }}>
+                SETUP STEPS
+              </div>
+              <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[
+                  <>Go to <span style={{ color: 'var(--accent)' }}>console.cloud.google.com</span> → your project</>,
+                  <>APIs & Services → Library → enable <strong>Google Calendar API</strong></>,
+                  <>Credentials → your OAuth 2.0 Client ID → Edit</>,
+                  <>Under <strong>Authorized JavaScript origins</strong> add ALL origins shown above</>,
+                  <>Save — wait ~5 min for Google to propagate</>,
+                  <>Paste your Client ID in the field above and hit SAVE, then Connect</>,
+                ].map((step, i) => (
+                  <li key={i} style={{ fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)', lineHeight: 1.55 }}>
+                    {step}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
 
           {errMsg && (
             <div style={{
@@ -398,7 +448,7 @@ function Calendar() {
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           {grouped.map((item, i) => item.type === 'header' ? (
             <div key={`h-${i}`} style={{
-              fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase',
+              fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em',
               color: item.label === 'TODAY' ? 'var(--accent)' : 'var(--fg-4)',
               padding: i === 0 ? '0 0 5px' : '10px 0 5px',
               borderTop: i > 0 ? '1px solid var(--border)' : 'none',
@@ -408,18 +458,15 @@ function Calendar() {
           ) : (
             <div key={item.id} style={{
               display: 'grid', gridTemplateColumns: '4px 76px 1fr',
-              alignItems: 'center', gap: 10,
-              padding: '7px 0',
+              alignItems: 'center', gap: 10, padding: '7px 0',
               borderBottom: '1px solid var(--border)',
               opacity: isPast(item.end, item.allDay) ? 0.4 : 1,
             }}>
-              {/* color bar */}
               <div style={{
                 width: 3, height: '100%', minHeight: 14,
                 background: evColor(item), borderRadius: 1,
                 boxShadow: isHappening(item.start, item.end) ? `0 0 8px ${evColor(item)}` : 'none',
               }} />
-              {/* time */}
               <span style={{
                 fontFamily: 'var(--font-mono)', fontSize: 11,
                 color: isHappening(item.start, item.end) ? 'var(--accent)' : 'var(--fg-3)',
@@ -427,10 +474,8 @@ function Calendar() {
               }}>
                 {fmtStart(item.start, item.allDay)}
               </span>
-              {/* name */}
               <span style={{
-                fontFamily: 'var(--font-sans)', fontSize: 13,
-                color: 'var(--fg-1)',
+                fontFamily: 'var(--font-sans)', fontSize: 13, color: 'var(--fg-1)',
                 fontWeight: isHappening(item.start, item.end) ? 500 : 400,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>

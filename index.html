@@ -2,15 +2,25 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
+
+  <!-- PWA -->
+  <meta name="theme-color" content="#0A0A0F">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Spencer OS">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/assets/logo-mark.svg">
+
   <title>Spencer OS · Dashboard</title>
   <link rel="icon" href="assets/logo-mark.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="colors_and_type.css?v=26">
+  <link rel="stylesheet" href="colors_and_type.css?v=27">
   <style>
     html, body, #root { height: 100%; margin: 0; }
     body { overflow: hidden; }
@@ -29,25 +39,36 @@
   <!-- Supabase SDK (must load before db.js) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
   <!-- DB bootstrap: initialises window._supa + one-time localStorage migration -->
-  <script src="db.js?v=26"></script>
+  <script src="db.js?v=27"></script>
 </head>
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" src="ui.jsx?v=26"></script>
-  <script type="text/babel" src="Sidebar.jsx?v=26"></script>
-  <script type="text/babel" src="TopBar.jsx?v=26"></script>
-  <script type="text/babel" src="modules/Cash.jsx?v=26"></script>
-  <script type="text/babel" src="modules/Investments.jsx?v=26"></script>
-  <script type="text/babel" src="modules/HealthPulse.jsx?v=26"></script>
-  <script type="text/babel" src="modules/Workouts.jsx?v=26"></script>
-  <script type="text/babel" src="modules/DailyChecklist.jsx?v=26"></script>
-  <script type="text/babel" src="modules/CRM.jsx?v=26"></script>
-  <script type="text/babel" src="modules/Calendar.jsx?v=26"></script>
-  <script type="text/babel" src="modules/Journal.jsx?v=26"></script>
-  <script type="text/babel" src="modules/Goals.jsx?v=26"></script>
-  <script type="text/babel" src="modules/SAT.jsx?v=26"></script>
-  <script type="text/babel" src="modules/CommandPalette.jsx?v=26"></script>
-  <script type="text/babel" src="App.jsx?v=26"></script>
+  <script type="text/babel" src="ui.jsx?v=27"></script>
+  <script type="text/babel" src="Sidebar.jsx?v=27"></script>
+  <script type="text/babel" src="TopBar.jsx?v=27"></script>
+  <script type="text/babel" src="modules/Cash.jsx?v=27"></script>
+  <script type="text/babel" src="modules/Investments.jsx?v=27"></script>
+  <script type="text/babel" src="modules/HealthPulse.jsx?v=27"></script>
+  <script type="text/babel" src="modules/Workouts.jsx?v=27"></script>
+  <script type="text/babel" src="modules/DailyChecklist.jsx?v=27"></script>
+  <script type="text/babel" src="modules/CRM.jsx?v=27"></script>
+  <script type="text/babel" src="modules/Calendar.jsx?v=27"></script>
+  <script type="text/babel" src="modules/Journal.jsx?v=27"></script>
+  <script type="text/babel" src="modules/Goals.jsx?v=27"></script>
+  <script type="text/babel" src="modules/SAT.jsx?v=27"></script>
+  <script type="text/babel" src="modules/CommandPalette.jsx?v=27"></script>
+  <script type="text/babel" src="App.jsx?v=27"></script>
+
+  <!-- Register service worker for PWA / offline support -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(err => {
+          console.warn('[PWA] Service worker registration failed:', err);
+        });
+      });
+    }
+  </script>
 </body>
 </html>

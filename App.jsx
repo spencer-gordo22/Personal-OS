@@ -252,6 +252,94 @@ function Settings() {
         </div>
       </div>
 
+      {/* ── Module Management Guide (pinned reference) ── */}
+      <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', marginBottom: 16 }}>
+        <div style={{
+          padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: 11, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--fg-2)' }}>
+            Managing Your Modules
+          </span>
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 8, letterSpacing: '0.08em',
+            color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 2, padding: '1px 5px',
+          }}>PINNED REFERENCE</span>
+        </div>
+        <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+          {/* ADD */}
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--pos)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+              ＋ ADD A MODULE
+            </div>
+            {[
+              ['1', 'Create', 'modules/MyModule.jsx', '— component must end with window.MyModule = MyModule'],
+              ['2', 'index.html', '<script type="text/babel" src="modules/MyModule.jsx?vN"></script>', '— add before App.jsx script tag'],
+              ['3', 'App.jsx globals', '/* global …, MyModule */', '— add to the top comment'],
+              ['4', 'App.jsx VIEWS', "mymodule: { label: 'My Module' }", '— add to the VIEWS object'],
+              ['5', 'App.jsx ModuleView', "if (id === 'mymodule') return <MyModule />;", '— add a branch'],
+              ['6', 'Sidebar.jsx', "{ id: 'mymodule', name: 'MY MODULE', icon: 'icon-name' }", '— add to SIDEBAR_ITEMS'],
+              ['7', 'Bump version', '?v=26 → ?v=27 everywhere in index.html', '— forces browser cache bust'],
+              ['8', 'Deploy', 'git add … && git commit -m "Add MyModule" && git push && flyctl deploy', ''],
+            ].map(([num, label, code, note]) => (
+              <div key={num} style={{ display: 'grid', gridTemplateColumns: '16px 60px 1fr', gap: 6, alignItems: 'baseline', marginBottom: 5 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)' }}>{num}.</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.04em' }}>{label}</span>
+                <span>
+                  <code style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-1)', background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2 }}>{code}</code>
+                  {note && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', marginLeft: 5 }}>{note}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ borderTop: '1px dashed var(--border)' }} />
+
+          {/* REMOVE */}
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+              − REMOVE A MODULE
+            </div>
+            {[
+              ['1', 'Delete', 'modules/MyModule.jsx'],
+              ['2', 'index.html', 'Remove its <script> tag'],
+              ['3', 'App.jsx', 'Remove from VIEWS, ModuleView branch, and globals comment'],
+              ['4', 'Sidebar.jsx', 'Remove from SIDEBAR_ITEMS (and MOBILE_TABS if present)'],
+              ['5', 'Deploy', 'Bump version → commit → push → flyctl deploy'],
+            ].map(([num, label, code]) => (
+              <div key={num} style={{ display: 'grid', gridTemplateColumns: '16px 60px 1fr', gap: 6, alignItems: 'baseline', marginBottom: 5 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)' }}>{num}.</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)' }}>{label}</span>
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-1)', background: 'var(--bg-3)', padding: '1px 4px', borderRadius: 2 }}>{code}</code>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ borderTop: '1px dashed var(--border)' }} />
+
+          {/* DEPLOY */}
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 8 }}>
+              ↑ DEPLOY CHANGES
+            </div>
+            {[
+              ['git add', '<changed files>  — prefer named files over git add -A'],
+              ['git commit', '-m "your message"'],
+              ['git push', '(pushes to GitHub)'],
+              ['flyctl deploy', '— rebuilds & restarts the Fly.io machine (~60 s)'],
+              ['flyctl logs', '-a spencer-os  — tail logs to check for errors post-deploy'],
+            ].map(([cmd, rest]) => (
+              <div key={cmd} style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 5 }}>
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 2, flexShrink: 0 }}>{cmd}</code>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)' }}>{rest}</span>
+              </div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+
       {/* ── App Info ── */}
       <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', background: 'var(--bg-2)' }}>
@@ -261,7 +349,7 @@ function Settings() {
         </div>
         <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {[
-            ['Version',    'Spencer OS v4.3.0'],
+            ['Version',    'Spencer OS v4.4.0'],
             ['Backend',    'Python 3 · serve.py'],
             ['Persistence','Supabase kv_store + crm_items'],
             ['Auth',       'localStorage sos_auth_v1'],
