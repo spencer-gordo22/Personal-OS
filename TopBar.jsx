@@ -1,7 +1,7 @@
 /* global React, Icon */
 const { useState: useStateTop, useEffect: useEffectTop } = React;
 
-function Clock() {
+function Clock({ timeOnly = false }) {
   const [now, setNow] = useStateTop(new Date());
   useEffectTop(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -15,45 +15,45 @@ function Clock() {
       fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-2)',
       letterSpacing: '0.04em', fontVariantNumeric: 'tabular-nums',
     }}>
-      {date}  ·  {time}
+      {timeOnly ? time : `${date}  ·  ${time}`}
     </span>
   );
 }
 
 function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile }) {
 
-  /* ── Mobile layout: logo left, live clock right ── */
+  /* ── Mobile layout: fixed top bar, logo left, time right ── */
   if (isMobile) {
     return (
       <header style={{
+        /* Fixed so the bar stays pinned and the background
+           fills flush behind the iPhone status bar / Dynamic Island */
+        position: 'fixed', top: 0, left: 0, right: 0,
+        zIndex: 600,
         background: 'var(--bg-0)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
-        flexShrink: 0, minWidth: 0, maxWidth: '100vw',
-        /* Two-row structure: safe-area spacer + 52px content row */
         display: 'flex', flexDirection: 'column',
+        margin: 0,
       }}>
-        {/* ── Status-bar safe-area fill ──
-            Fills the notch/island area with the app background.
-            On non-iPhone browsers this collapses to 0px.          */}
-        <div style={{ height: 'env(safe-area-inset-top, 0px)' }} />
+        {/* ── Safe-area spacer ──────────────────────────────────
+            Fills the notch / Dynamic Island zone with the app
+            background colour. Collapses to 0px everywhere else. */}
+        <div style={{ height: 'env(safe-area-inset-top, 0px)', flexShrink: 0 }} />
 
-        {/* ── 52px content row ── */}
+        {/* ── 52px content row ─────────────────────────────── */}
         <div style={{
           height: 52, display: 'flex', alignItems: 'center',
-          padding: '0 16px',
+          padding: '0 20px', flexShrink: 0,
         }}>
-          {/* Brand */}
           <span style={{
             fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14,
             color: 'var(--fg-1)', letterSpacing: '-0.02em', whiteSpace: 'nowrap',
           }}>
             Spencer<span style={{ color: 'var(--accent)' }}>_OS</span>
           </span>
-
           <div style={{ flex: 1 }} />
-
-          {/* Live clock */}
-          <Clock />
+          {/* Time only — no date */}
+          <Clock timeOnly />
         </div>
       </header>
     );
