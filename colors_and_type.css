@@ -369,17 +369,14 @@ html, body {
      indicator via padding-bottom: env(safe-area-inset-bottom).
      ═══════════════════════════════════════════════════════════ */
   .sos-bottom-nav {
-    /* ── Exact layout specified for flush iPhone safe-area ── */
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
+    width: 100%;
     background: #0A0A0F;
-    /* max() — always at least 16px, uses the real safe area if larger.
-       This is what makes the background bleed flush to the physical edge
-       on every iPhone model including iPhone 17.                         */
-    padding-bottom: max(env(safe-area-inset-bottom), 16px);
     padding-top: 10px;
+    padding-bottom: 34px;  /* iPhone home indicator is 34px — hardcoded so it always works */
     /* ── Structural layout ── */
     display: flex;
     align-items: flex-start;
