@@ -369,27 +369,25 @@ html, body {
      indicator via padding-bottom: env(safe-area-inset-bottom).
      ═══════════════════════════════════════════════════════════ */
   .sos-bottom-nav {
-    display: flex !important;
-    position: fixed !important;
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    margin: 0 !important;           /* no gap between nav and screen edge */
-    width: 100vw !important;
-    box-sizing: border-box !important;
-    background: #0A0A0F !important;
-    border-top: 1px solid rgba(255, 255, 255, 0.10) !important;
-    z-index: 500 !important;
-    align-items: flex-start !important;  /* icons at top; padding-bottom fills below */
-    justify-content: space-around !important;
-    /* top padding: visual space above icons
-       bottom padding: home-indicator safe area — background still
-       fills all the way to the physical edge via position: fixed */
-    padding-top: 10px !important;
-    padding-left: 4px !important;
-    padding-right: 4px !important;
-    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
-    min-height: 56px !important;    /* minimum on non-notch devices */
+    /* ── Exact layout specified for flush iPhone safe-area ── */
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #0A0A0F;
+    /* max() — always at least 16px, uses the real safe area if larger.
+       This is what makes the background bleed flush to the physical edge
+       on every iPhone model including iPhone 17.                         */
+    padding-bottom: max(env(safe-area-inset-bottom), 16px);
+    padding-top: 10px;
+    /* ── Structural layout ── */
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-around;
+    padding-left: 4px;
+    padding-right: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+    z-index: 500;
   }
 
   /* 16px side padding wrapper (set in App.jsx via sos-content-pad class) */
