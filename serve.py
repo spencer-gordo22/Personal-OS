@@ -91,14 +91,15 @@ WHOOP_CLIENT_ID     = os.environ.get('WHOOP_CLIENT_ID',     '').strip()
 WHOOP_CLIENT_SECRET = os.environ.get('WHOOP_CLIENT_SECRET', '').strip()
 
 # Google Calendar OAuth — server-side authorization code flow.
-# Redirect URI must be added to "Authorized redirect URIs" in Google Cloud Console.
+# GOOGLE_REDIRECT is hardcoded — do not change it here without also updating
+# "Authorized redirect URIs" in Google Cloud Console to exactly this string.
 GOOGLE_CLIENT_ID     = os.environ.get('GOOGLE_CLIENT_ID',     '').strip()
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '').strip()
-GOOGLE_REDIRECT      = os.environ.get('GOOGLE_REDIRECT',
-                           'https://spencer-os.fly.dev/google/callback').strip()
+GOOGLE_REDIRECT      = 'https://spencer-os.fly.dev/google/callback'
 GOOGLE_AUTH_URL  = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_SCOPE     = 'https://www.googleapis.com/auth/calendar.readonly'
+print(f'[google oauth] redirect_uri locked to: {GOOGLE_REDIRECT}')
 
 # ── WHOOP OAuth state store ──────────────────────────────────────────────────
 # Keyed by a random UUID generated per auth attempt. Validated on callback.
