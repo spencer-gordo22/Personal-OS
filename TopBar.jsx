@@ -26,25 +26,35 @@ function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile }) {
   if (isMobile) {
     return (
       <header style={{
-        height: 52, background: 'var(--bg-0)',
+        background: 'var(--bg-0)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex', alignItems: 'center',
-        padding: '0 16px',
-        flexShrink: 0,
-        overflow: 'hidden', minWidth: 0, maxWidth: '100vw',
+        flexShrink: 0, minWidth: 0, maxWidth: '100vw',
+        /* Two-row structure: safe-area spacer + 52px content row */
+        display: 'flex', flexDirection: 'column',
       }}>
-        {/* Brand */}
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14,
-          color: 'var(--fg-1)', letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+        {/* ── Status-bar safe-area fill ──
+            Fills the notch/island area with the app background.
+            On non-iPhone browsers this collapses to 0px.          */}
+        <div style={{ height: 'env(safe-area-inset-top, 0px)' }} />
+
+        {/* ── 52px content row ── */}
+        <div style={{
+          height: 52, display: 'flex', alignItems: 'center',
+          padding: '0 16px',
         }}>
-          Spencer<span style={{ color: 'var(--accent)' }}>_OS</span>
-        </span>
+          {/* Brand */}
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14,
+            color: 'var(--fg-1)', letterSpacing: '-0.02em', whiteSpace: 'nowrap',
+          }}>
+            Spencer<span style={{ color: 'var(--accent)' }}>_OS</span>
+          </span>
 
-        <div style={{ flex: 1 }} />
+          <div style={{ flex: 1 }} />
 
-        {/* Live clock */}
-        <Clock />
+          {/* Live clock */}
+          <Clock />
+        </div>
       </header>
     );
   }
