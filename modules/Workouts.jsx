@@ -218,8 +218,8 @@ function Workouts() {
         </span>
       }>
 
-      {/* ── workout week strip ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 10 }}>
+      {/* ── workout week strip — scrolls horizontally on mobile ── */}
+      <div className="sos-week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 10 }}>
         {week.map(d => {
           const wkt = workouts[d.iso] || { type: d.defType, done: false };
           const typeColor = TYPE_COLOR[wkt.type] || 'var(--fg-3)';
@@ -266,7 +266,7 @@ function Workouts() {
         <span className="label-micro" style={{ display: 'block', color: 'var(--fg-4)', marginBottom: 5, letterSpacing: '0.08em' }}>
           BJJ / COMBAT · {bjjDone}/7 this week{bjjStreak > 0 ? ` · ${bjjStreak}d streak` : ''}
         </span>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+        <div className="sos-bjj-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
           {week.map(d => {
             const went = bjj[d.iso] && bjj[d.iso].done;
             return (

@@ -26,7 +26,7 @@ function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile }) {
   if (isMobile) {
     return (
       <header style={{
-        height: 44, background: 'var(--bg-0)',
+        height: 52, background: 'var(--bg-0)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         display: 'flex', alignItems: 'center',
         padding: '0 16px',
@@ -52,7 +52,7 @@ function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile }) {
   /* ── Desktop layout: full topbar ── */
   return (
     <header style={{
-      height: 44, background: 'var(--bg-0)',
+      height: 52, background: 'var(--bg-0)',
       borderBottom: '1px solid var(--border)',
       display: 'flex', alignItems: 'center', gap: 12,
       padding: '0 16px',

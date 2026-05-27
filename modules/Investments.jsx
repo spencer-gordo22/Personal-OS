@@ -187,22 +187,25 @@ function Investments() {
       }>
 
       {/* ══ portfolio summary ══════════════════════════════ */}
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: isMobile ? 14 : 10, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
         <PfKpi
-          label="portfolio value"
+          label={isMobile ? 'value' : 'portfolio value'}
           value={totalValue !== null ? `$${totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+          compact={isMobile}
         />
         <PfKpi
-          label="total gain / loss"
+          label={isMobile ? 'gain/loss' : 'total gain / loss'}
           value={totalGain$ !== null ? `${sgn(totalGain$)}${d$(totalGain$)}` : '—'}
           sub={pct(totalGainPct)}
           n={totalGain$}
+          compact={isMobile}
         />
         <PfKpi
-          label="today's change"
+          label={isMobile ? 'today' : "today's change"}
           value={totalDay$ !== null ? `${sgn(totalDay$)}${d$(totalDay$)}` : '—'}
           sub={pct(totalDayPct)}
           n={totalDay$}
+          compact={isMobile}
         />
       </div>
 
@@ -220,7 +223,7 @@ function Investments() {
           {/* rows */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
             {rows.map((r, idx) => (
-              <div key={r.sym} style={{ display: 'grid', gridTemplateColumns: '48px 1fr 66px 18px', gap: 6, alignItems: 'center' }}>
+              <div key={r.sym} className="sos-inv-row" style={{ display: 'grid', gridTemplateColumns: '48px 1fr 66px 18px', gap: 6, alignItems: 'center' }}>
                 {/* symbol */}
                 <span style={{ ...MONO, fontSize: 13, fontWeight: 700, color: 'var(--fg-1)', letterSpacing: '0.04em' }}>
                   {r.sym}
@@ -406,16 +409,16 @@ function Investments() {
 }
 
 /* ── Portfolio KPI stat ─────────────────────────── */
-function PfKpi({ label, value, sub, n }) {
+function PfKpi({ label, value, sub, n, compact }) {
   const valColor = n == null ? 'var(--fg-1)' : clr(n);
   return (
-    <div>
-      <div className="label-micro" style={{ color: 'var(--fg-3)', marginBottom: 5 }}>{label}</div>
-      <div style={{ ...MONO, fontSize: 15, fontWeight: 500, color: n != null ? valColor : 'var(--fg-1)' }}>
+    <div style={{ minWidth: 0, overflow: 'hidden' }}>
+      <div className="label-micro" style={{ color: 'var(--fg-3)', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+      <div style={{ ...MONO, fontSize: compact ? 13 : 15, fontWeight: 500, color: n != null ? valColor : 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {value}
       </div>
       {sub && (
-        <div style={{ ...MONO, fontSize: 10, color: n != null ? valColor : 'var(--fg-3)', marginTop: 3 }}>
+        <div style={{ ...MONO, fontSize: 10, color: n != null ? valColor : 'var(--fg-3)', marginTop: 2 }}>
           {sub}
         </div>
       )}

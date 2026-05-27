@@ -122,9 +122,9 @@ function Sidebar({ activeId, onSelect, onHome }) {
                 WebkitTapHighlightColor: 'transparent',
                 userSelect: 'none',
               }}>
-              <Icon name={tab.icon} size={22} />
+              <Icon name={tab.icon} size={24} />
               <span style={{
-                fontFamily: 'var(--font-sans)', fontSize: 9, fontWeight: 500,
+                fontFamily: 'var(--font-sans)', fontSize: 10, fontWeight: 500,
                 letterSpacing: '0.04em', textTransform: 'uppercase',
                 lineHeight: 1,
                 color: isActive ? '#00D4FF' : '#3A3A45',

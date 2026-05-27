@@ -610,30 +610,33 @@ function App() {
           backgroundImage: isMobile ? 'none' : 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 0)',
           backgroundSize: '16px 16px',
         }}>
+
           {/* page title strip — desktop only */}
           {!isMobile && (
-          <div className="sos-page-title-section" style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-            padding: '8px 4px 16px',
-            flexWrap: 'wrap', gap: 8,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-              <h1 className="sos-page-title" style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--fg-1)' }}>
-                {pageLabel}
-              </h1>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                {todayStamp()}
-              </span>
+            <div className="sos-page-title-section" style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+              padding: '8px 4px 16px', flexWrap: 'wrap', gap: 8,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+                <h1 className="sos-page-title" style={{ fontFamily: 'var(--font-sans)', fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--fg-1)' }}>
+                  {pageLabel}
+                </h1>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  {todayStamp()}
+                </span>
+              </div>
             </div>
-          </div>
           )}
 
-          {isDashboard
-            ? <DashboardGrid isMobile={isMobile} />
-            : <ModuleView id={active} isMobile={isMobile} />
-          }
+          {/* ── 16px side padding wrapper on mobile ── */}
+          <div className={isMobile ? 'sos-content-pad' : undefined}>
+            {isDashboard
+              ? <DashboardGrid isMobile={isMobile} />
+              : <ModuleView id={active} isMobile={isMobile} />
+            }
+          </div>
 
-          {/* footer status strip */}
+          {/* footer status strip — desktop only */}
           {!isMobile && (
             <div style={{
               marginTop: 16, padding: '10px 4px',

@@ -132,9 +132,17 @@
   --dur-slow:    200ms;
 }
 
-/* Global box model — prevent padding/border from adding to declared widths */
+/* Global box model + baseline reset */
 *, *::before, *::after {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100vw;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 html, body {
@@ -146,10 +154,6 @@ html, body {
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Hard-clip horizontal overflow so no element ever triggers page-wide scroll */
-  width: 100%;
-  max-width: 100vw;
-  overflow-x: hidden;
 }
 
 .h1, h1 { font-family: var(--font-sans); font-size: var(--fs-h1); font-weight: var(--fw-semibold); letter-spacing: var(--track-display); line-height: var(--lh-display); color: var(--fg-1); margin: 0; }
@@ -329,56 +333,58 @@ html, body {
 .tabular { font-variant-numeric: tabular-nums slashed-zero; }
 
 /* ============================================================
-   Mobile Responsive  (≤ 768px)
-   Native iPhone app feel — Bloomberg / Robinhood aesthetic
+   Mobile  (≤ 768px) — Robinhood × Linear premium native feel
    ============================================================ */
 
-/* Bottom tab bar — hidden on desktop */
+/* Bottom nav hidden on desktop */
 .sos-bottom-nav { display: none; }
 
 @media (max-width: 768px) {
 
-  /* ── Root overflow lock ── */
-  #root {
-    width: 100%;
-    max-width: 100vw;
-    overflow-x: hidden;
-  }
-
-  /* ── Sidebar: hidden on mobile ── */
+  /* ── Sidebar hidden ── */
   .sos-sidebar { display: none !important; }
 
-  /* ── Native tab bar ───────────────────────────────────────────────────────
-     83px total: ~10px top icon padding + icons + labels + safe area bottom   */
+  /* ═══════════════════════════════════════════════════════════
+     NATIVE TAB BAR
+     83px fixed height; icons + labels sit in top 55px;
+     the remaining 28px is the iPhone home-indicator safe area.
+     env() fills in the real value on actual iPhones.
+     ═══════════════════════════════════════════════════════════ */
   .sos-bottom-nav {
     display: flex;
     position: fixed;
     bottom: 0; left: 0; right: 0;
+    height: 83px;
     background: #0A0A0F;
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
     z-index: 500;
     align-items: flex-start;
     justify-content: space-around;
-    padding: 10px 4px env(safe-area-inset-bottom, 20px);
+    padding: 12px 4px env(safe-area-inset-bottom, 16px);
   }
 
-  /* ── Main content ── */
+  /* ═══════════════════════════════════════════════════════════
+     MAIN SCROLL AREA — no side padding here (wrapper handles it)
+     ═══════════════════════════════════════════════════════════ */
   .sos-main {
     padding: 0 !important;
     padding-bottom: 100px !important;
-    width: 100% !important;
+    width: 100vw !important;
     max-width: 100vw !important;
     overflow-x: hidden !important;
-    /* Solid dark bg — no dot grid on mobile */
     background-image: none !important;
-    background-color: var(--bg-1) !important;
+    background-color: #07070B !important;
   }
 
-  /* ── Full-bleed grid: cards edge-to-edge, 8px dark gap between sections ── */
+  /* 16px side padding wrapper (set in App.jsx via sos-content-pad class) */
+  .sos-content-pad {
+    padding: 16px 16px 0;
+  }
+
+  /* ── Grid: single column, 12px gap ── */
   .sos-dashboard-grid {
     grid-template-columns: 1fr !important;
-    gap: 8px !important;
-    padding: 0 !important;
+    gap: 12px !important;
   }
   .sos-dashboard-grid > div {
     grid-column: span 1 !important;
@@ -388,8 +394,7 @@ html, body {
 
   .sos-module-view {
     grid-template-columns: 1fr !important;
-    gap: 8px !important;
-    padding: 0 !important;
+    gap: 12px !important;
   }
   .sos-module-view > div {
     grid-column: span 1 !important;
@@ -397,19 +402,22 @@ html, body {
     width: 100%;
   }
 
-  /* ── Page-title strip — hidden; topbar + tab labels provide context ── */
+  /* ── Page title + command bar hidden ── */
   .sos-page-title-section { display: none !important; }
   .sos-topbar-cmd         { display: none !important; }
 
-  /* ── Cards: full-bleed, no side borders, no radius ── */
+  /* ═══════════════════════════════════════════════════════════
+     CARDS — dark, 12px radius, no shadow
+     ═══════════════════════════════════════════════════════════ */
   .card {
     width: 100%;
     max-width: 100%;
     min-width: 0;
     overflow: hidden;
-    border-radius: 0 !important;
-    border-left: none !important;
-    border-right: none !important;
+    background: #111318 !important;
+    border: 1px solid rgba(255, 255, 255, 0.06) !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
   }
 
   .card-header {
@@ -417,12 +425,16 @@ html, body {
     min-width: 0;
     height: 44px;
     padding: 0 16px;
+    background: #111318 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
   }
 
-  /* Card label: 10px per spec */
+  /* Section labels: 10px dim gray */
   .card-header .label {
     font-size: 10px !important;
-    letter-spacing: 0.10em;
+    letter-spacing: 0.12em;
+    color: #5A5A68 !important;
+    text-transform: uppercase;
   }
 
   .card-body {
@@ -431,6 +443,7 @@ html, body {
     min-width: 0;
     overflow-x: hidden;
     padding: 16px !important;
+    font-size: 13px;
   }
 
   .card-body > div,
@@ -438,30 +451,70 @@ html, body {
     min-width: 0;
   }
 
-  /* ── Typography scaling ── */
-  /* Body text */
-  .card-body { font-size: 13px; }
+  /* ═══════════════════════════════════════════════════════════
+     TYPOGRAPHY SCALE
+     section labels 10px · card titles 13px · data values 20px
+     body text 13px · small labels 11px
+     ═══════════════════════════════════════════════════════════ */
+  .label-micro { font-size: 10px !important; }
+  .label       { font-size: 10px !important; }
+  .meta        { font-size: 11px !important; }
 
-  /* KPI values: scale down so they still read as hero numbers */
-  .kpi-xl { font-size: 40px; }
-  .kpi-lg { font-size: 28px; }
-  .kpi-md { font-size: 22px; }
-  .kpi-sm { font-size: 18px; }
+  /* KPI / data values */
+  .kpi-xl { font-size: 40px !important; }
+  .kpi-lg { font-size: 24px !important; }
+  .kpi-md { font-size: 20px !important; }
+  .kpi-sm { font-size: 20px !important; }
 
-  /* Radii override at root for any inline border-radius */
-  :root {
-    --r-3: 0px;   /* card base radius */
-    --r-4: 6px;   /* inner elements keep slight rounding */
+  /* ═══════════════════════════════════════════════════════════
+     HORIZONTAL SCROLLING STRIPS (week, BJJ)
+     Bleed to card edges; each item fixed 52px wide; no scrollbar
+     ═══════════════════════════════════════════════════════════ */
+  .sos-week-strip,
+  .sos-bjj-strip {
+    display: flex !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 8px !important;
+    /* bleed past card padding to use full width */
+    margin-left: -16px !important;
+    margin-right: -16px !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    padding-bottom: 4px !important;
+  }
+  .sos-week-strip::-webkit-scrollbar,
+  .sos-bjj-strip::-webkit-scrollbar { display: none; }
+
+  .sos-week-strip > div,
+  .sos-bjj-strip > div {
+    flex: 0 0 52px !important;
+    min-width: 52px !important;
+    width: 52px !important;
   }
 
-  /* ── Horizontal scroll zones (only the inner table scrolls) ── */
+  /* ── Investment table rows: 44px tap target ── */
+  .sos-inv-row {
+    min-height: 44px;
+    align-items: center !important;
+  }
+
+  /* ── Disable hover states on touch devices ── */
+  @media (hover: none) {
+    .btn:hover       { background: var(--bg-2) !important; border-color: var(--border) !important; }
+    .btn-primary:hover { background: var(--accent) !important; }
+    .btn-ghost:hover { background: transparent !important; }
+  }
+
+  /* ── Generic scroll zone ── */
   .sos-scroll-x {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
 }
 
-/* Desktop: keep sidebar, hide bottom nav */
+/* Desktop: sidebar visible, no bottom nav */
 @media (min-width: 769px) {
   .sos-bottom-nav { display: none !important; }
   .sos-sidebar    { display: flex !important; }

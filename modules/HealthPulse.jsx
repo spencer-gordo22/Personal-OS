@@ -1,4 +1,4 @@
-/* global React, Card, Kpi, Delta, Sparkline, Bars, Icon, useLocalStorage */
+/* global React, Card, Kpi, Delta, Sparkline, Bars, Icon, useLocalStorage, useIsMobile */
 const { useState: useStateHP, useEffect: useEffectHP } = React;
 
 const HR_DATA    = [58, 60, 59, 62, 61, 60, 58, 59, 57, 58, 59, 58];
@@ -49,6 +49,7 @@ const inp = (full) => ({
 });
 
 function HealthPulse() {
+  const isMobile = useIsMobile();
   const [health, setHealth] = useLocalStorage('sos_health_v2', INITIAL_HEALTH);
   const [editMode, setEditMode] = useStateHP(false);
   const [drafts,   setDrafts]   = useStateHP(null);
@@ -178,70 +179,187 @@ function HealthPulse() {
         </span>
       }>
 
-      {/* ── top 3 big metrics ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      {isMobile ? (
 
-        <Tri label="resting hr" value={String(h.hr)} unit="bpm"
-          color={isConnected ? whoopColor('hr', h.hr) : undefined}
-          editNode={editMode &&
-            <input autoFocus value={drafts.hr} onChange={upd('hr')} onKeyDown={onKey} style={inp()} />}
-          trace={<Sparkline data={HR_DATA} stroke="#3DDC97" height={28} />}
-          delta={<Delta value={String(h.hr)} tone="flat">7d</Delta>}
-        />
+        /* ══════════════════════════════════════════════════════
+           MOBILE LAYOUT
+           1. Recovery hero (large, WHOOP-colored, centered)
+           2. 2×3 metric grid: HR · HRV · Sleep / Sleep% · Steps · Weight
+           ══════════════════════════════════════════════════════ */
+        <>
 
-        <Tri label="hrv" value={String(h.hrv)} unit="ms"
-          color={isConnected ? whoopColor('hrv', h.hrv) : undefined}
-          editNode={editMode &&
-            <input value={drafts.hrv} onChange={upd('hrv')} onKeyDown={onKey} style={inp()} />}
-          trace={<Sparkline data={[54, 58, 62, 60, 64, 66, 64]} stroke="#00D4FF" height={28} />}
-          delta={<Delta value="+ 4" tone="pos">wk</Delta>}
-        />
+          {/* ── Recovery hero ── */}
+          <div style={{
+            textAlign: 'center',
+            padding: '20px 0 24px',
+            marginBottom: 16,
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+          }}>
+            <div style={{
+              fontSize: 10, fontFamily: 'var(--font-sans)', fontWeight: 500,
+              color: '#5A5A68', letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: 14,
+            }}>
+              recovery score
+            </div>
 
-        <Tri label="sleep" value={String(h.sleep)} unit="hrs"
-          editNode={editMode &&
-            <input value={drafts.sleep} onChange={upd('sleep')} onKeyDown={onKey} style={inp()} />}
-          trace={<Bars data={SLEEP_BARS} color="#7B9DFF" height={28} />}
-          delta={<Delta value="+ 0.6" tone="pos">wk</Delta>}
-        />
+            {editMode && drafts ? (
+              <input
+                value={drafts.recovery}
+                onChange={upd('recovery')}
+                onKeyDown={onKey}
+                style={{ ...inp(false), width: 100, textAlign: 'center', fontSize: 36, marginBottom: 8 }}
+              />
+            ) : (
+              <div style={{
+                fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 72, lineHeight: 1,
+                color: whoopColor('recovery', h.recovery) || '#E8E8EC',
+                letterSpacing: '-0.02em',
+              }}>
+                {h.recovery > 0 ? h.recovery : '—'}
+                {h.recovery > 0 && (
+                  <span style={{ fontSize: 32, fontWeight: 400, color: '#5A5A68', marginLeft: 2 }}>%</span>
+                )}
+              </div>
+            )}
 
-      </div>
+            {h.recovery > 0 && (
+              <div style={{
+                marginTop: 12, fontSize: 12, fontFamily: 'var(--font-sans)',
+                color: whoopColor('recovery', h.recovery) || '#5A5A68',
+                letterSpacing: '0.01em',
+              }}>
+                {h.recovery >= 67 ? 'Green · Ready to perform'
+                  : h.recovery >= 34 ? 'Yellow · Proceed with caution'
+                  : 'Red · Prioritize recovery'}
+              </div>
+            )}
+          </div>
 
-      {/* ── bottom 5 mini metrics ── */}
-      <div style={{
-        marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)',
-        display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8,
-      }}>
+          {/* ── 3-col × 2-row metric grid ── */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px 12px' }}>
 
-        <Mini label="steps" value={h.steps.toLocaleString()}
-          editNode={editMode &&
-            <input value={drafts.steps} onChange={upd('steps')} onKeyDown={onKey} style={inp(true)} />}
-        />
+            <Mini label="resting hr"
+              value={h.hr ? `${h.hr}` : '—'}
+              color={isConnected ? whoopColor('hr', h.hr) : undefined}
+              unit="bpm"
+              editNode={editMode && drafts &&
+                <input autoFocus value={drafts.hr} onChange={upd('hr')} onKeyDown={onKey} style={inp(true)} />}
+            />
 
-        <Mini label="weight" value={`${h.weight} lbs`}
-          editNode={editMode &&
-            <input value={drafts.weight} onChange={upd('weight')} onKeyDown={onKey} style={inp(true)} />}
-        />
+            <Mini label="hrv"
+              value={h.hrv ? `${h.hrv}` : '—'}
+              color={isConnected ? whoopColor('hrv', h.hrv) : undefined}
+              unit="ms"
+              editNode={editMode && drafts &&
+                <input value={drafts.hrv} onChange={upd('hrv')} onKeyDown={onKey} style={inp(true)} />}
+            />
 
-        <Mini label="vo₂" value={String(h.vo2)}
-          editNode={editMode &&
-            <input value={drafts.vo2} onChange={upd('vo2')} onKeyDown={onKey} style={inp(true)} />}
-        />
+            <Mini label="sleep"
+              value={h.sleep ? `${h.sleep}` : '—'}
+              unit="hrs"
+              editNode={editMode && drafts &&
+                <input value={drafts.sleep} onChange={upd('sleep')} onKeyDown={onKey} style={inp(true)} />}
+            />
 
-        <Mini label="recovery"
-          value={`${h.recovery}%`}
-          color={isConnected ? whoopColor('recovery', h.recovery) : undefined}
-          editNode={editMode &&
-            <input value={drafts.recovery} onChange={upd('recovery')} onKeyDown={onKey} style={inp(true)} />}
-        />
+            <Mini label="sleep perf"
+              value={h.sleep_perf ? `${h.sleep_perf}%` : '—'}
+              color={isConnected ? whoopColor('sleep_perf', h.sleep_perf) : undefined}
+              editNode={editMode && drafts &&
+                <input value={drafts.sleep_perf} onChange={upd('sleep_perf')} onKeyDown={onKey} style={inp(true)} />}
+            />
 
-        <Mini label="sleep perf"
-          value={h.sleep_perf ? `${h.sleep_perf}%` : '—'}
-          color={isConnected ? whoopColor('sleep_perf', h.sleep_perf) : undefined}
-          editNode={editMode &&
-            <input value={drafts.sleep_perf} onChange={upd('sleep_perf')} onKeyDown={onKey} style={inp(true)} />}
-        />
+            <Mini label="steps"
+              value={h.steps > 0 ? h.steps.toLocaleString() : '—'}
+              editNode={editMode && drafts &&
+                <input value={drafts.steps} onChange={upd('steps')} onKeyDown={onKey} style={inp(true)} />}
+            />
 
-      </div>
+            <Mini label="weight"
+              value={h.weight ? `${h.weight}` : '—'}
+              unit="lbs"
+              editNode={editMode && drafts &&
+                <input value={drafts.weight} onChange={upd('weight')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+          </div>
+
+        </>
+
+      ) : (
+
+        /* ══════════════════════════════════════════════════════
+           DESKTOP LAYOUT — unchanged
+           ══════════════════════════════════════════════════════ */
+        <>
+
+          {/* ── top 3 big metrics ── */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+
+            <Tri label="resting hr" value={String(h.hr)} unit="bpm"
+              color={isConnected ? whoopColor('hr', h.hr) : undefined}
+              editNode={editMode &&
+                <input autoFocus value={drafts.hr} onChange={upd('hr')} onKeyDown={onKey} style={inp()} />}
+              trace={<Sparkline data={HR_DATA} stroke="#3DDC97" height={28} />}
+              delta={<Delta value={String(h.hr)} tone="flat">7d</Delta>}
+            />
+
+            <Tri label="hrv" value={String(h.hrv)} unit="ms"
+              color={isConnected ? whoopColor('hrv', h.hrv) : undefined}
+              editNode={editMode &&
+                <input value={drafts.hrv} onChange={upd('hrv')} onKeyDown={onKey} style={inp()} />}
+              trace={<Sparkline data={[54, 58, 62, 60, 64, 66, 64]} stroke="#00D4FF" height={28} />}
+              delta={<Delta value="+ 4" tone="pos">wk</Delta>}
+            />
+
+            <Tri label="sleep" value={String(h.sleep)} unit="hrs"
+              editNode={editMode &&
+                <input value={drafts.sleep} onChange={upd('sleep')} onKeyDown={onKey} style={inp()} />}
+              trace={<Bars data={SLEEP_BARS} color="#7B9DFF" height={28} />}
+              delta={<Delta value="+ 0.6" tone="pos">wk</Delta>}
+            />
+
+          </div>
+
+          {/* ── bottom 5 mini metrics ── */}
+          <div style={{
+            marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)',
+            display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8,
+          }}>
+
+            <Mini label="steps" value={h.steps.toLocaleString()}
+              editNode={editMode &&
+                <input value={drafts.steps} onChange={upd('steps')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+            <Mini label="weight" value={`${h.weight} lbs`}
+              editNode={editMode &&
+                <input value={drafts.weight} onChange={upd('weight')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+            <Mini label="vo₂" value={String(h.vo2)}
+              editNode={editMode &&
+                <input value={drafts.vo2} onChange={upd('vo2')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+            <Mini label="recovery"
+              value={`${h.recovery}%`}
+              color={isConnected ? whoopColor('recovery', h.recovery) : undefined}
+              editNode={editMode &&
+                <input value={drafts.recovery} onChange={upd('recovery')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+            <Mini label="sleep perf"
+              value={h.sleep_perf ? `${h.sleep_perf}%` : '—'}
+              color={isConnected ? whoopColor('sleep_perf', h.sleep_perf) : undefined}
+              editNode={editMode &&
+                <input value={drafts.sleep_perf} onChange={upd('sleep_perf')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+          </div>
+
+        </>
+
+      )}
 
       {/* ── WHOOP section ── */}
       <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed var(--border)' }}>
@@ -345,7 +463,7 @@ function Tri({ label, value, unit, trace, delta, editNode, color }) {
   );
 }
 
-function Mini({ label, value, tone, color, editNode }) {
+function Mini({ label, value, unit, tone, color, editNode }) {
   /* color prop (CSS string) takes precedence over legacy tone shorthand */
   const textColor = color
     || (tone === 'pos' ? 'var(--pos)' : tone === 'neg' ? 'var(--neg)' : 'var(--fg-1)');
@@ -357,7 +475,10 @@ function Mini({ label, value, tone, color, editNode }) {
           fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500,
           color: textColor, fontVariantNumeric: 'tabular-nums',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>{value}</span>
+        }}>
+          {value}
+          {unit && <span style={{ fontSize: 10, color: 'var(--fg-3)', marginLeft: 2 }}>{unit}</span>}
+        </span>
       )}
     </div>
   );
