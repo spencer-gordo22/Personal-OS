@@ -64,6 +64,10 @@ function HealthPulse() {
   const [whoopError,   setWhoopError]   = useStateHP('');
   const [lastSync,     setLastSync]     = useStateHP('');
 
+  /* ── manual-field inline editing (weight + vo2) ── */
+  const [inlineEdit,  setInlineEdit]  = useStateHP(null);   // 'weight' | 'vo2' | null
+  const [inlineDraft, setInlineDraft] = useStateHP('');
+
   /* ── auto-sync once on mount if token present ── */
   useEffectHP(() => {
     if (whoopToken && whoopToken.access_token) {
@@ -71,71 +75,26 @@ function HealthPulse() {
     }
   }, []);
 
-  /* syncWhoop reads all WHOOP data — server handles token refresh automatically. */
+  /* syncWhoop — pulls recovery score, HRV, resting HR, sleep, sleep performance
+     from WHOOP v2 API. Weight and VO2 are manual fields; never touched here. */
   async function syncWhoop() {
     setWhoopStatus('syncing');
     setWhoopError('');
     try {
-      /* Fetch all endpoints in parallel — body/measurement and user/measurement are new */
-      const [recRes, sleepRes, bodyRes, userMeasRes] = await Promise.all([
+      const [recRes, sleepRes] = await Promise.all([
         fetch('/whoop/data?endpoint=recovery'),
         fetch('/whoop/data?endpoint=activity/sleep'),
-        fetch('/whoop/data?endpoint=body/measurement'),
-        fetch('/whoop/data?endpoint=user/measurement'),
       ]);
-
       if (!recRes.ok || !sleepRes.ok) {
         throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}`);
       }
-
-      /* Parse responses — body/measurement and user/measurement are best-effort */
-      const [recJson, sleepJson, bodyJson, userMeasJson] = await Promise.all([
+      const [recJson, sleepJson] = await Promise.all([
         recRes.json(),
         sleepRes.json(),
-        bodyRes.ok     ? bodyRes.json()     : Promise.resolve(null),
-        userMeasRes.ok ? userMeasRes.json() : Promise.resolve(null),
       ]);
 
-      /* ── Debug logging: log full raw JSON for every endpoint ── */
-      console.log('[WHOOP] recovery raw:', JSON.stringify(recJson).slice(0, 1000));
-      console.log('[WHOOP] sleep raw:', JSON.stringify(sleepJson).slice(0, 500));
-      console.log('[WHOOP] body/measurement raw:', JSON.stringify(bodyJson));
-      console.log('[WHOOP] user/measurement raw:', JSON.stringify(userMeasJson));
-
-      /* ── Recovery metrics ── */
       const rec      = recJson.records?.[0];
       const sleepRec = sleepJson.records?.[0]?.score;
-
-      /* ── Weight: body/measurement returns kg → convert to lbs ── */
-      let newWeight = null;
-      if (bodyJson != null) {
-        const kg = bodyJson.weight_kilogram ?? bodyJson.weight_kg ?? bodyJson.weight;
-        if (kg != null && kg > 0) {
-          // WHOOP returns kg; multiply by 2.20462. Guard: if suspiciously high, already lbs.
-          newWeight = kg > 100
-            ? parseFloat(kg.toFixed(1))
-            : parseFloat((kg * 2.20462).toFixed(1));
-        }
-      }
-
-      /* ── VO2 max: probe user/measurement first (most likely), then recovery ── */
-      let newVo2 = null;
-      const vo2Candidates = [
-        // user/measurement is the primary source per WHOOP docs
-        userMeasJson?.vo2_max,
-        userMeasJson?.max_oxygen_volume,
-        userMeasJson?.vo2max,
-        userMeasJson?.aerobic_fitness,
-        // fall back to recovery score
-        rec?.score?.vo2_max,
-        rec?.vo2_max,
-        recJson?.vo2_max,
-      ];
-      for (const v of vo2Candidates) {
-        if (v != null && v > 0) { newVo2 = Math.round(v); break; }
-      }
-      console.log('[WHOOP] userMeas keys:', userMeasJson ? Object.keys(userMeasJson) : 'null');
-      console.log('[WHOOP] VO2 candidates:', vo2Candidates, '→', newVo2);
 
       setHealth(h => ({
         ...h,
@@ -149,8 +108,7 @@ function HealthPulse() {
         sleep_perf: sleepRec?.sleep_performance_percentage != null
                       ? Math.round(sleepRec.sleep_performance_percentage)
                       : h.sleep_perf,
-        weight:     newWeight ?? h.weight,
-        vo2:        newVo2    ?? h.vo2,
+        // weight and vo2 intentionally omitted — manual fields
       }));
 
       setLastSync(new Date().toLocaleTimeString());
@@ -160,6 +118,21 @@ function HealthPulse() {
       setWhoopError(err.message);
     }
   }
+
+  const startInlineEdit = (field) => {
+    setInlineEdit(field);
+    setInlineDraft(String(health[field] > 0 ? health[field] : ''));
+  };
+  const cancelInlineEdit = () => { setInlineEdit(null); setInlineDraft(''); };
+  const saveInlineEdit = () => {
+    if (!inlineEdit) return;
+    const n = parseFloat(inlineDraft);
+    if (!isNaN(n) && n >= 0) {
+      setHealth(h => ({ ...h, [inlineEdit]: n }));
+    }
+    setInlineEdit(null);
+    setInlineDraft('');
+  };
 
   const connectWhoop = () => {
     const cid = whoopClientId.trim();
@@ -182,8 +155,6 @@ function HealthPulse() {
       sleep:      String(health.sleep),
       sleep_perf: String(health.sleep_perf),
       steps:      String(health.steps),
-      weight:     String(health.weight),
-      vo2:        String(health.vo2),
       recovery:   String(health.recovery),
     });
     setEditMode(true);
@@ -192,16 +163,15 @@ function HealthPulse() {
   const commitEdit = () => {
     const pf = (s, fb) => { const n = parseFloat(s); return isNaN(n) ? fb : n; };
     const pi = (s, fb) => { const n = parseInt(s);   return isNaN(n) ? fb : n; };
-    setHealth({
-      hr:         pi(drafts.hr,         health.hr),
-      hrv:        pi(drafts.hrv,        health.hrv),
-      sleep:      pf(drafts.sleep,      health.sleep),
-      sleep_perf: pi(drafts.sleep_perf, health.sleep_perf),
-      steps:      pi(drafts.steps,      health.steps),
-      weight:     pf(drafts.weight,     health.weight),
-      vo2:        pf(drafts.vo2,        health.vo2),
-      recovery:   pi(drafts.recovery,   health.recovery),
-    });
+    setHealth(h => ({
+      ...h,                                          // preserves weight + vo2 (manual fields)
+      hr:         pi(drafts.hr,         h.hr),
+      hrv:        pi(drafts.hrv,        h.hrv),
+      sleep:      pf(drafts.sleep,      h.sleep),
+      sleep_perf: pi(drafts.sleep_perf, h.sleep_perf),
+      steps:      pi(drafts.steps,      h.steps),
+      recovery:   pi(drafts.recovery,   h.recovery),
+    }));
     setEditMode(false);
     setDrafts(null);
   };
@@ -323,11 +293,16 @@ function HealthPulse() {
                 <input value={drafts.steps} onChange={upd('steps')} onKeyDown={onKey} style={inp(true)} />}
             />
 
-            <Mini label="weight"
-              value={h.weight ? `${h.weight}` : '—'}
-              unit="lbs"
-              editNode={editMode && drafts &&
-                <input value={drafts.weight} onChange={upd('weight')} onKeyDown={onKey} style={inp(true)} />}
+            <ManualMini label="weight" fieldKey="weight" value={h.weight} unit="lbs"
+              inlineEdit={inlineEdit} inlineDraft={inlineDraft}
+              onStart={startInlineEdit} onSave={saveInlineEdit}
+              onCancel={cancelInlineEdit} onDraftChange={setInlineDraft}
+            />
+
+            <ManualMini label="vo₂ max" fieldKey="vo2" value={h.vo2}
+              inlineEdit={inlineEdit} inlineDraft={inlineDraft}
+              onStart={startInlineEdit} onSave={saveInlineEdit}
+              onCancel={cancelInlineEdit} onDraftChange={setInlineDraft}
             />
 
           </div>
@@ -380,14 +355,16 @@ function HealthPulse() {
                 <input value={drafts.steps} onChange={upd('steps')} onKeyDown={onKey} style={inp(true)} />}
             />
 
-            <Mini label="weight" value={`${h.weight} lbs`}
-              editNode={editMode &&
-                <input value={drafts.weight} onChange={upd('weight')} onKeyDown={onKey} style={inp(true)} />}
+            <ManualMini label="weight" fieldKey="weight" value={h.weight} unit="lbs"
+              inlineEdit={inlineEdit} inlineDraft={inlineDraft}
+              onStart={startInlineEdit} onSave={saveInlineEdit}
+              onCancel={cancelInlineEdit} onDraftChange={setInlineDraft}
             />
 
-            <Mini label="vo₂" value={String(h.vo2)}
-              editNode={editMode &&
-                <input value={drafts.vo2} onChange={upd('vo2')} onKeyDown={onKey} style={inp(true)} />}
+            <ManualMini label="vo₂ max" fieldKey="vo2" value={h.vo2}
+              inlineEdit={inlineEdit} inlineDraft={inlineDraft}
+              onStart={startInlineEdit} onSave={saveInlineEdit}
+              onCancel={cancelInlineEdit} onDraftChange={setInlineDraft}
             />
 
             <Mini label="recovery"
@@ -508,6 +485,67 @@ function Tri({ label, value, unit, trace, delta, editNode, color }) {
       {editNode || <Kpi value={value} unit={unit} size="md" color={color} />}
       <div style={{ marginTop: 2 }}>{trace}</div>
       <div>{delta}</div>
+    </div>
+  );
+}
+
+/* ManualMini — like Mini but with an always-visible pencil that lets the user
+   type in a value inline. Used for weight and VO2 which aren't available via
+   the WHOOP API and must be entered manually. Saves to Supabase via setHealth. */
+function ManualMini({ label, fieldKey, value, unit, inlineEdit, inlineDraft, onStart, onSave, onCancel, onDraftChange }) {
+  const editing = inlineEdit === fieldKey;
+  const inpStyle = {
+    background: 'var(--bg-3)', border: '1px solid var(--accent)', borderRadius: 2,
+    padding: '2px 5px', color: 'var(--fg-1)', fontFamily: 'var(--font-mono)',
+    fontSize: 12, fontWeight: 500, outline: 'none',
+    width: '100%', boxSizing: 'border-box',
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <span className="label-micro" style={{
+        color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {label}
+      </span>
+      {editing ? (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <input
+            autoFocus
+            value={inlineDraft}
+            onChange={e => onDraftChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter')  onSave();
+              if (e.key === 'Escape') onCancel();
+            }}
+            style={inpStyle}
+          />
+          <span
+            onClick={onSave}
+            style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 13, lineHeight: 1, flexShrink: 0 }}
+          >✓</span>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+          <span style={{
+            fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500,
+            color: value > 0 ? 'var(--fg-1)' : 'var(--fg-4)',
+            fontVariantNumeric: 'tabular-nums',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1,
+          }}>
+            {value > 0 ? value : '—'}
+            {value > 0 && unit && (
+              <span style={{ fontSize: 10, color: 'var(--fg-3)', marginLeft: 2 }}>{unit}</span>
+            )}
+          </span>
+          <span
+            onClick={() => onStart(fieldKey)}
+            title={`Edit ${label}`}
+            style={{ cursor: 'pointer', color: 'var(--fg-4)', flexShrink: 0, lineHeight: 1 }}
+          >
+            <Icon name="pencil" size={9} />
+          </span>
+        </div>
+      )}
     </div>
   );
 }

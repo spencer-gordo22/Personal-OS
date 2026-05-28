@@ -77,7 +77,7 @@ WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
 WHOOP_API_V1    = 'https://api.prod.whoop.com/developer/v1'
-WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout read:body_measurement read:user.measurement'
+WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout'
 
 # WHOOP redirect URI — must match exactly what's registered in WHOOP Developer Portal.
 # Always use the Fly.io URL; local OAuth won't work (WHOOP requires HTTPS).
@@ -508,11 +508,10 @@ def _build_whoop_endpoint_urls():
         'activity/sleep':   f'{WHOOP_API_BASE}/activity/sleep?limit=1',
         'activity/workout': f'{WHOOP_API_BASE}/activity/workout?limit=1',
         'cycle':            f'{WHOOP_API_BASE}/cycle?limit=1',
-        # v1 single-resource endpoints (body measurements, user profile)
+        # v1 endpoints (debug only — all return 404 in production)
         'body/measurement':    f'{WHOOP_API_V1}/body/measurement',
         'user/measurement':    f'{WHOOP_API_V1}/user/measurement',
         'v2/user/measurement': f'{WHOOP_API_BASE}/user/measurement',
-        # v1 collection endpoints (for VO2 max probe)
         'v1/cycle':            f'{WHOOP_API_V1}/cycle/collection?limit=1',
         'v1/recovery':         f'{WHOOP_API_V1}/recovery/collection?limit=1',
     }
