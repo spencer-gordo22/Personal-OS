@@ -59,8 +59,6 @@ OPENAI_KEY = os.environ.get('OPENAI_KEY', '').strip()
 TG_API_BASE  = f'https://api.telegram.org/bot{TG_TOKEN}'
 TG_FILE_BASE = f'https://api.telegram.org/file/bot{TG_TOKEN}'
 
-HEVY_KEY      = os.environ.get('HEVY_KEY', '').strip()
-HEVY_API_BASE = 'https://api.hevyapp.com/v1'
 
 VAPID_PUBLIC_KEY  = os.environ.get('VAPID_PUBLIC_KEY',  '').strip()
 VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '').strip()
@@ -739,7 +737,6 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         if   p.startswith('/api/quotes'):            self._proxy_quotes()
         elif p.startswith('/api/config'):            self._api_config()
         elif p.startswith('/api/debug/crm'):         self._debug_crm()
-        elif p.startswith('/api/hevy'):              self._hevy_proxy()
         elif p.startswith('/api/plaid/config'):      self._plaid_config()
         elif p.startswith('/api/plaid/balance'):     self._plaid_balance()
         elif p.startswith('/api/plaid/transactions'):self._plaid_transactions()
@@ -763,6 +760,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/api/push/subscribe'):       self._push_subscribe()
         elif p.startswith('/api/push/send'):            self._push_send()
         elif p.startswith('/google/disconnect'):        self._google_disconnect()
+        elif p.startswith('/api/parse-workout'):        self._parse_workout()
         elif p.startswith('/telegram/webhook'):         self._telegram_webhook()
         else:                                           self.send_error(404)
 
@@ -1157,32 +1155,69 @@ try{{
         self.end_headers()
         self.wfile.write(body)
 
-    # ── Hevy proxy ────────────────────────────────────────────────────────────
+    # ── Workout paste parser ──────────────────────────────────────────────────
 
-    def _hevy_proxy(self):
-        qs       = parse_qs(urlparse(self.path).query)
-        key      = qs.get('key',      [HEVY_KEY])[0].strip()
-        page     = qs.get('page',     ['1'])[0]
-        pageSize = qs.get('pageSize', ['10'])[0]
-        if not key:
-            self._json_error(401, 'No Hevy API key — pass ?key=YOUR_KEY or set HEVY_KEY env var')
-            return
-        url = f'{HEVY_API_BASE}/workouts?page={page}&pageSize={pageSize}'
-        req = urllib.request.Request(url, headers={
-            'api-key': key, 'User-Agent': UA, 'Accept': 'application/json',
-        })
+    def _parse_workout(self):
+        """POST /api/parse-workout  body: {text: string}
+        Uses OpenAI to extract structured workout data from pasted Hevy text.
+        Returns: {name, date, duration, totalVolume, exercises:[{name,sets:[{reps,weight}]}]}
+        """
+        length = int(self.headers.get('Content-Length', 0))
+        body   = json.loads(self.rfile.read(length))
+        text   = (body.get('text') or '').strip()
+        if not text:
+            self._json_error(400, 'No text provided'); return
+        if not OPENAI_KEY:
+            self._json_error(503, 'OPENAI_KEY not configured'); return
+
+        today  = datetime.date.today().isoformat()
+        system = (
+            'You are a workout parser. Parse the workout text and return ONLY a raw JSON '
+            'object (no markdown fences, no extra keys) with exactly these fields:\n'
+            '  name        : string  — workout name (e.g. "Push Day A")\n'
+            '  date        : string  — ISO date YYYY-MM-DD; use today if absent\n'
+            '  duration    : string  — e.g. "62 min"; empty string if unknown\n'
+            '  totalVolume : number  — total lbs lifted (sum of reps × weight for all sets; 0 if unknown)\n'
+            '  exercises   : array of { name: string, sets: [ { reps: number, weight: number } ] }\n'
+            'Convert kg→lbs (multiply by 2.205, round to nearest 0.5). '
+            'If weight units are unclear assume lbs. '
+            f'Today is {today}. Return ONLY the JSON object.'
+        )
+        payload = {
+            'model': 'gpt-4o-mini', 'temperature': 0.1, 'max_tokens': 1500,
+            'messages': [
+                {'role': 'system', 'content': system},
+                {'role': 'user',   'content': text},
+            ],
+        }
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=json.dumps(payload).encode(),
+            headers={'Authorization': f'Bearer {OPENAI_KEY}',
+                     'Content-Type': 'application/json', 'User-Agent': UA},
+        )
         try:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                body = r.read()
-        except urllib.request.HTTPError as e:
-            self._json_error(e.code, e.read().decode()); return
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = json.loads(r.read().decode())['choices'][0]['message']['content'].strip()
         except Exception as e:
-            self._json_error(502, str(e)); return
+            self._json_error(502, f'OpenAI error: {e}'); return
+
+        # Strip markdown fences if model wraps anyway
+        if raw.startswith('```'):
+            parts = raw.split('```')
+            raw   = parts[1].lstrip('json\n').strip() if len(parts) > 1 else raw
+
+        try:
+            result = json.loads(raw)
+        except Exception:
+            self._json_error(422, f'Could not parse model response: {raw[:300]}'); return
+
+        resp = json.dumps(result).encode()
         self.send_response(200)
         self.send_header('Content-Type',   'application/json')
-        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Content-Length', str(len(resp)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(resp)
 
     # ── Plaid ─────────────────────────────────────────────────────────────────
 
