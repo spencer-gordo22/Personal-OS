@@ -77,7 +77,7 @@ WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
 WHOOP_API_V1    = 'https://api.prod.whoop.com/developer/v1'
-WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout read:body_measurement'
+WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout read:body_measurement read:user.measurement'
 
 # WHOOP redirect URI — must match exactly what's registered in WHOOP Developer Portal.
 # Always use the Fly.io URL; local OAuth won't work (WHOOP requires HTTPS).
@@ -509,11 +509,12 @@ def _build_whoop_endpoint_urls():
         'activity/workout': f'{WHOOP_API_BASE}/activity/workout?limit=1',
         'cycle':            f'{WHOOP_API_BASE}/cycle?limit=1',
         # v1 single-resource endpoints (body measurements, user profile)
-        'body/measurement': f'{WHOOP_API_V1}/body/measurement',
-        'user/measurement': f'{WHOOP_API_V1}/user/measurement',
+        'body/measurement':    f'{WHOOP_API_V1}/body/measurement',
+        'user/measurement':    f'{WHOOP_API_V1}/user/measurement',
+        'v2/user/measurement': f'{WHOOP_API_BASE}/user/measurement',
         # v1 collection endpoints (for VO2 max probe)
-        'v1/cycle':         f'{WHOOP_API_V1}/cycle/collection?limit=1',
-        'v1/recovery':      f'{WHOOP_API_V1}/recovery/collection?limit=1',
+        'v1/cycle':            f'{WHOOP_API_V1}/cycle/collection?limit=1',
+        'v1/recovery':         f'{WHOOP_API_V1}/recovery/collection?limit=1',
     }
 
 
@@ -859,6 +860,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/whoop/data'):            self._whoop_data()
         elif p.startswith('/whoop/status'):          self._whoop_status()
         elif p.startswith('/whoop/refresh'):         self._whoop_refresh_endpoint()
+        elif p.startswith('/whoop/debug'):           self._whoop_debug()
         elif p.startswith('/google/auth'):           self._google_auth()
         elif p.startswith('/google/callback'):       self._google_callback()
         elif p.startswith('/google/events'):         self._google_events()
@@ -1177,6 +1179,60 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
             })
         except Exception as e:
             self._json_error(500, f'Refresh failed: {e}')
+
+    def _whoop_debug(self):
+        """
+        GET /whoop/debug — calls every relevant WHOOP endpoint and returns the
+        complete raw JSON for each so you can locate weight and VO2 max fields.
+        Safe to hit at any time; read-only.
+        """
+        try:
+            access_token = _whoop_get_valid_token()
+        except Exception as e:
+            self._json_error(401, f'WHOOP token error: {e}'); return
+        if not access_token:
+            self._json_error(401, 'WHOOP not connected — reconnect via Health Pulse'); return
+
+        # All URLs to probe — keyed by a friendly label
+        probe_urls = {
+            'v1/body/measurement':        f'{WHOOP_API_V1}/body/measurement',
+            'v1/user/measurement':        f'{WHOOP_API_V1}/user/measurement',
+            'v2/user/measurement':        f'{WHOOP_API_BASE}/user/measurement',
+            'v1/recovery/collection':     f'{WHOOP_API_V1}/recovery/collection?limit=1',
+            'v2/recovery':                f'{WHOOP_API_BASE}/recovery?limit=1',
+            'v2/cycle':                   f'{WHOOP_API_BASE}/cycle?limit=1',
+        }
+
+        results = {}
+        for label, url in probe_urls.items():
+            print(f'[whoop debug] probing {url}')
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={'Authorization': f'Bearer {access_token}',
+                             'User-Agent': UA})
+                with urllib.request.urlopen(req, timeout=12) as r:
+                    raw = r.read().decode('utf-8', errors='replace')
+                print(f'[whoop debug] {label} → 200 ({len(raw)}B): {raw[:800]}')
+                try:
+                    results[label] = {'status': 200, 'data': json.loads(raw)}
+                except Exception:
+                    results[label] = {'status': 200, 'raw': raw}
+            except urllib.request.HTTPError as e:
+                err_body = ''
+                try: err_body = e.read().decode('utf-8', errors='replace')
+                except Exception: pass
+                print(f'[whoop debug] {label} → HTTP {e.code}: {err_body[:300]}')
+                results[label] = {'status': e.code, 'error': err_body[:500]}
+            except Exception as exc:
+                print(f'[whoop debug] {label} → exception: {exc}')
+                results[label] = {'status': 0, 'error': str(exc)}
+
+        self._json({
+            'token':     access_token[:12] + '…',
+            'scope':     WHOOP_SCOPE,
+            'endpoints': results,
+        })
 
     # ── Telegram webhook ──────────────────────────────────────────────────────
 

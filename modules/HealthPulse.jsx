@@ -76,31 +76,31 @@ function HealthPulse() {
     setWhoopStatus('syncing');
     setWhoopError('');
     try {
-      /* Fetch all endpoints in parallel — body/measurement and cycle are new */
-      const [recRes, sleepRes, bodyRes, cycleRes] = await Promise.all([
+      /* Fetch all endpoints in parallel — body/measurement and user/measurement are new */
+      const [recRes, sleepRes, bodyRes, userMeasRes] = await Promise.all([
         fetch('/whoop/data?endpoint=recovery'),
         fetch('/whoop/data?endpoint=activity/sleep'),
         fetch('/whoop/data?endpoint=body/measurement'),
-        fetch('/whoop/data?endpoint=cycle'),
+        fetch('/whoop/data?endpoint=user/measurement'),
       ]);
 
       if (!recRes.ok || !sleepRes.ok) {
         throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}`);
       }
 
-      /* Parse responses — body/measurement and cycle are best-effort */
-      const [recJson, sleepJson, bodyJson, cycleJson] = await Promise.all([
+      /* Parse responses — body/measurement and user/measurement are best-effort */
+      const [recJson, sleepJson, bodyJson, userMeasJson] = await Promise.all([
         recRes.json(),
         sleepRes.json(),
-        bodyRes.ok   ? bodyRes.json()   : Promise.resolve(null),
-        cycleRes.ok  ? cycleRes.json()  : Promise.resolve(null),
+        bodyRes.ok     ? bodyRes.json()     : Promise.resolve(null),
+        userMeasRes.ok ? userMeasRes.json() : Promise.resolve(null),
       ]);
 
       /* ── Debug logging: log full raw JSON for every endpoint ── */
       console.log('[WHOOP] recovery raw:', JSON.stringify(recJson).slice(0, 1000));
       console.log('[WHOOP] sleep raw:', JSON.stringify(sleepJson).slice(0, 500));
       console.log('[WHOOP] body/measurement raw:', JSON.stringify(bodyJson));
-      console.log('[WHOOP] cycle raw:', JSON.stringify(cycleJson).slice(0, 1000));
+      console.log('[WHOOP] user/measurement raw:', JSON.stringify(userMeasJson));
 
       /* ── Recovery metrics ── */
       const rec      = recJson.records?.[0];
@@ -111,26 +111,30 @@ function HealthPulse() {
       if (bodyJson != null) {
         const kg = bodyJson.weight_kilogram ?? bodyJson.weight_kg ?? bodyJson.weight;
         if (kg != null && kg > 0) {
-          // If it's clearly already in lbs (> 150), don't double-convert
+          // WHOOP returns kg; multiply by 2.20462. Guard: if suspiciously high, already lbs.
           newWeight = kg > 100
-            ? parseFloat(kg.toFixed(1))                            // probably already lbs
-            : parseFloat((kg * 2.20462).toFixed(1));               // kg → lbs
+            ? parseFloat(kg.toFixed(1))
+            : parseFloat((kg * 2.20462).toFixed(1));
         }
       }
 
-      /* ── VO2 max: probe all likely fields across recovery + cycle ── */
+      /* ── VO2 max: probe user/measurement first (most likely), then recovery ── */
       let newVo2 = null;
       const vo2Candidates = [
+        // user/measurement is the primary source per WHOOP docs
+        userMeasJson?.vo2_max,
+        userMeasJson?.max_oxygen_volume,
+        userMeasJson?.vo2max,
+        userMeasJson?.aerobic_fitness,
+        // fall back to recovery score
         rec?.score?.vo2_max,
         rec?.vo2_max,
         recJson?.vo2_max,
-        cycleJson?.records?.[0]?.score?.vo2_max,
-        cycleJson?.records?.[0]?.vo2_max,
-        cycleJson?.vo2_max,
       ];
       for (const v of vo2Candidates) {
         if (v != null && v > 0) { newVo2 = Math.round(v); break; }
       }
+      console.log('[WHOOP] userMeas keys:', userMeasJson ? Object.keys(userMeasJson) : 'null');
       console.log('[WHOOP] VO2 candidates:', vo2Candidates, '→', newVo2);
 
       setHealth(h => ({
