@@ -76,7 +76,8 @@ PLAID_API_BASE  = {
 WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
-WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout'
+WHOOP_API_V1    = 'https://api.prod.whoop.com/developer/v1'
+WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout read:body_measurement'
 
 # WHOOP redirect URI — must match exactly what's registered in WHOOP Developer Portal.
 # Always use the Fly.io URL; local OAuth won't work (WHOOP requires HTTPS).
@@ -493,11 +494,40 @@ def _whoop_get_valid_token() -> 'str | None':
     return access_token or None
 
 
+# ── WHOOP endpoint URL map ────────────────────────────────────────────────────
+# Maps the short endpoint name (used as query param) → full request URL.
+# v2 collection endpoints append ?limit=1; v1 single-resource endpoints do not.
+WHOOP_ENDPOINT_URLS: dict = {}  # populated after constants are set
+
+
+def _build_whoop_endpoint_urls():
+    global WHOOP_ENDPOINT_URLS
+    WHOOP_ENDPOINT_URLS = {
+        # v2 collection endpoints (recovery, sleep, workout, cycle)
+        'recovery':         f'{WHOOP_API_BASE}/recovery?limit=1',
+        'activity/sleep':   f'{WHOOP_API_BASE}/activity/sleep?limit=1',
+        'activity/workout': f'{WHOOP_API_BASE}/activity/workout?limit=1',
+        'cycle':            f'{WHOOP_API_BASE}/cycle?limit=1',
+        # v1 single-resource endpoints (body measurements, user profile)
+        'body/measurement': f'{WHOOP_API_V1}/body/measurement',
+        'user/measurement': f'{WHOOP_API_V1}/user/measurement',
+        # v1 collection endpoints (for VO2 max probe)
+        'v1/cycle':         f'{WHOOP_API_V1}/cycle/collection?limit=1',
+        'v1/recovery':      f'{WHOOP_API_V1}/recovery/collection?limit=1',
+    }
+
+
+_build_whoop_endpoint_urls()
+
+
 def _whoop_api_call(endpoint: str, access_token: str) -> bytes:
-    """Make a single WHOOP API call; returns raw response bytes."""
+    """Make a single WHOOP API call; returns raw response bytes.
+    endpoint must be a key in WHOOP_ENDPOINT_URLS."""
+    url = WHOOP_ENDPOINT_URLS.get(endpoint)
+    if not url:
+        raise ValueError(f'Unknown WHOOP endpoint: {endpoint!r}')
     req = urllib.request.Request(
-        f'{WHOOP_API_BASE}/{endpoint}?limit=1',
-        headers={'Authorization': f'Bearer {access_token}', 'User-Agent': UA})
+        url, headers={'Authorization': f'Bearer {access_token}', 'User-Agent': UA})
     with urllib.request.urlopen(req, timeout=10) as r:
         return r.read()
 
@@ -1059,9 +1089,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def _whoop_data(self):
         qs       = parse_qs(urlparse(self.path).query)
         endpoint = qs.get('endpoint', [''])[0].strip()
-        ALLOWED  = {'recovery', 'activity/sleep', 'activity/workout', 'cycle'}
+        ALLOWED  = set(WHOOP_ENDPOINT_URLS.keys())
         if endpoint not in ALLOWED:
-            self._json_error(400, f'endpoint must be one of {ALLOWED}'); return
+            self._json_error(400, f'endpoint must be one of {sorted(ALLOWED)}'); return
 
         # Get valid token — proactive refresh if expiring within 60s
         try:
@@ -1072,24 +1102,31 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         if not access_token:
             self._json_error(401, 'WHOOP not connected — reconnect via Health Pulse'); return
 
-        print(f'[whoop data] GET /{endpoint}  token={access_token[:12]}…')
+        url = WHOOP_ENDPOINT_URLS[endpoint]
+        print(f'[whoop data] GET {url}  token={access_token[:12]}…')
 
         # First attempt
         try:
             body = _whoop_api_call(endpoint, access_token)
-            print(f'[whoop data] /{endpoint} → 200 ({len(body)}B)')
+            raw_text = body.decode('utf-8', errors='replace')
+            print(f'[whoop data] {endpoint} → 200 ({len(body)}B)')
+            print(f'[whoop RAW] {endpoint}: {raw_text[:3000]}')
         except urllib.request.HTTPError as e:
             if e.code == 401:
                 # 401 on a supposedly valid token — force refresh and retry once
-                print(f'[whoop data] 401 on /{endpoint} — forcing refresh + retry')
+                print(f'[whoop data] 401 on {endpoint} — forcing refresh + retry')
                 try:
                     new_access = _whoop_do_refresh()
                     body = _whoop_api_call(endpoint, new_access)
-                    print(f'[whoop data] /{endpoint} → 200 after refresh ({len(body)}B)')
+                    raw_text = body.decode('utf-8', errors='replace')
+                    print(f'[whoop data] {endpoint} → 200 after refresh ({len(body)}B)')
+                    print(f'[whoop RAW] {endpoint}: {raw_text[:3000]}')
                 except Exception as ref_e:
                     self._json_error(401, f'WHOOP refresh failed: {ref_e}'); return
             else:
-                self._json_error(e.code, e.read().decode()); return
+                err_body = e.read().decode('utf-8', errors='replace')
+                print(f'[whoop data] {endpoint} → HTTP {e.code}: {err_body[:500]}')
+                self._json_error(e.code, err_body); return
         except Exception as e:
             self._json_error(502, str(e)); return
 

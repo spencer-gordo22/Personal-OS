@@ -71,37 +71,82 @@ function HealthPulse() {
     }
   }, []);
 
-  /* syncWhoop no longer needs a token argument — the server reads from Supabase
-     and auto-refreshes silently if the access token is expired. */
+  /* syncWhoop reads all WHOOP data — server handles token refresh automatically. */
   async function syncWhoop() {
     setWhoopStatus('syncing');
     setWhoopError('');
     try {
-      const [recRes, sleepRes] = await Promise.all([
+      /* Fetch all endpoints in parallel — body/measurement and cycle are new */
+      const [recRes, sleepRes, bodyRes, cycleRes] = await Promise.all([
         fetch('/whoop/data?endpoint=recovery'),
         fetch('/whoop/data?endpoint=activity/sleep'),
+        fetch('/whoop/data?endpoint=body/measurement'),
+        fetch('/whoop/data?endpoint=cycle'),
       ]);
-      if (!recRes.ok || !sleepRes.ok) throw new Error(`HTTP ${recRes.status}/${sleepRes.status}`);
-      const recJson   = await recRes.json();
-      const sleepJson = await sleepRes.json();
 
-      /* parse recovery */
-      const rec     = recJson.records?.[0];
+      if (!recRes.ok || !sleepRes.ok) {
+        throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}`);
+      }
+
+      /* Parse responses — body/measurement and cycle are best-effort */
+      const [recJson, sleepJson, bodyJson, cycleJson] = await Promise.all([
+        recRes.json(),
+        sleepRes.json(),
+        bodyRes.ok   ? bodyRes.json()   : Promise.resolve(null),
+        cycleRes.ok  ? cycleRes.json()  : Promise.resolve(null),
+      ]);
+
+      /* ── Debug logging: log full raw JSON for every endpoint ── */
+      console.log('[WHOOP] recovery raw:', JSON.stringify(recJson).slice(0, 1000));
+      console.log('[WHOOP] sleep raw:', JSON.stringify(sleepJson).slice(0, 500));
+      console.log('[WHOOP] body/measurement raw:', JSON.stringify(bodyJson));
+      console.log('[WHOOP] cycle raw:', JSON.stringify(cycleJson).slice(0, 1000));
+
+      /* ── Recovery metrics ── */
+      const rec      = recJson.records?.[0];
       const sleepRec = sleepJson.records?.[0]?.score;
+
+      /* ── Weight: body/measurement returns kg → convert to lbs ── */
+      let newWeight = null;
+      if (bodyJson != null) {
+        const kg = bodyJson.weight_kilogram ?? bodyJson.weight_kg ?? bodyJson.weight;
+        if (kg != null && kg > 0) {
+          // If it's clearly already in lbs (> 150), don't double-convert
+          newWeight = kg > 100
+            ? parseFloat(kg.toFixed(1))                            // probably already lbs
+            : parseFloat((kg * 2.20462).toFixed(1));               // kg → lbs
+        }
+      }
+
+      /* ── VO2 max: probe all likely fields across recovery + cycle ── */
+      let newVo2 = null;
+      const vo2Candidates = [
+        rec?.score?.vo2_max,
+        rec?.vo2_max,
+        recJson?.vo2_max,
+        cycleJson?.records?.[0]?.score?.vo2_max,
+        cycleJson?.records?.[0]?.vo2_max,
+        cycleJson?.vo2_max,
+      ];
+      for (const v of vo2Candidates) {
+        if (v != null && v > 0) { newVo2 = Math.round(v); break; }
+      }
+      console.log('[WHOOP] VO2 candidates:', vo2Candidates, '→', newVo2);
 
       setHealth(h => ({
         ...h,
-        recovery:   rec?.score?.recovery_score       ?? h.recovery,
+        recovery:   rec?.score?.recovery_score ?? h.recovery,
         hrv:        rec?.score?.hrv_rmssd_milli != null
-                      ? Math.round(rec.score.hrv_rmssd_milli)
-                      : h.hrv,
-        hr:         rec?.score?.resting_heart_rate   ?? h.hr,
+                      ? Math.round(rec.score.hrv_rmssd_milli) : h.hrv,
+        hr:         rec?.score?.resting_heart_rate ?? h.hr,
         sleep:      sleepRec?.total_in_bed_time_milli != null
                       ? parseFloat((sleepRec.total_in_bed_time_milli / 3600000).toFixed(1))
                       : h.sleep,
         sleep_perf: sleepRec?.sleep_performance_percentage != null
                       ? Math.round(sleepRec.sleep_performance_percentage)
                       : h.sleep_perf,
+        weight:     newWeight ?? h.weight,
+        vo2:        newVo2    ?? h.vo2,
       }));
 
       setLastSync(new Date().toLocaleTimeString());
