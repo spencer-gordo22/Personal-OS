@@ -359,33 +359,18 @@ def _google_get_valid_token(force_refresh: bool = False) -> 'str | None':
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WHOOP server-side refresh helpers
+# ─────────────────────────────────────────────────────────────────────────────
+# WHOOP token helpers — flat Supabase keys for clarity and reliability
+#
+# Keys used:
+#   whoop_access_token   — current bearer token string
+#   whoop_refresh_token  — refresh token string
+#   whoop_token_expiry   — absolute UNIX epoch (int, seconds)
+#   sos_whoop_token      — kept for backward compat (full dict)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _whoop_get_token() -> 'dict | None':
-    """Read WHOOP token dict from Supabase kv_store."""
-    return _supa_kv_get('sos_whoop_token')
-
-
-def _whoop_api_call(endpoint: str, access_token: str) -> bytes:
-    """Make a single WHOOP API call; returns raw response bytes."""
-    req = urllib.request.Request(
-        f'{WHOOP_API_BASE}/{endpoint}?limit=1',
-        headers={'Authorization': f'Bearer {access_token}', 'User-Agent': UA})
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return r.read()
-
-
-def _whoop_refresh(token_data: dict) -> dict:
-    """
-    Use the stored refresh_token to obtain new WHOOP tokens.
-    Client credentials are read from env vars → Supabase kv_store fallback.
-    Saves updated token to Supabase. Returns new token dict.
-    """
-    refresh_token = token_data.get('refresh_token', '').strip()
-    if not refresh_token:
-        raise ValueError('No WHOOP refresh_token stored — please reconnect')
-
+def _whoop_creds() -> 'tuple[str,str]':
+    """Return (client_id, client_secret) from env vars → Supabase fallback."""
     cid = WHOOP_CLIENT_ID
     sec = WHOOP_CLIENT_SECRET
     if not cid:
@@ -394,9 +379,50 @@ def _whoop_refresh(token_data: dict) -> dict:
     if not sec:
         raw = _supa_kv_get('sos_whoop_client_secret')
         sec = raw if isinstance(raw, str) else ''
-    if not cid or not sec:
-        raise ValueError('WHOOP client credentials unavailable for token refresh')
+    return cid, sec
 
+
+def _whoop_save_tokens(tok: dict) -> None:
+    """Persist WHOOP token response dict to all three flat Supabase keys + legacy key."""
+    now           = int(time.time())
+    access_token  = tok.get('access_token',  '')
+    refresh_token = tok.get('refresh_token', '')
+    expires_in    = int(tok.get('expires_in', 3600))
+    expires_at    = now + expires_in
+
+    _supa_kv_set('whoop_access_token',  access_token)
+    _supa_kv_set('whoop_refresh_token', refresh_token)
+    _supa_kv_set('whoop_token_expiry',  expires_at)
+
+    # Legacy full-dict key — kept so old code paths still work
+    tok['fetched_at'] = now * 1000
+    _supa_kv_set('sos_whoop_token', tok)
+
+    print(f'[whoop tokens] saved: access={access_token[:12]}…  '
+          f'refresh={refresh_token[:12]}…  expires_in={expires_in}s  expires_at={expires_at}')
+
+
+def _whoop_do_refresh() -> str:
+    """
+    Exchange stored refresh token for new tokens.
+    Saves to Supabase. Returns new access_token string.
+    If WHOOP returns 401, clears all stored tokens (user must reconnect).
+    Raises ValueError on any failure.
+    """
+    refresh_token = _supa_kv_get('whoop_refresh_token') or ''
+    if not refresh_token:
+        # Backward-compat: try legacy full dict
+        old = _supa_kv_get('sos_whoop_token')
+        if old and isinstance(old, dict):
+            refresh_token = old.get('refresh_token', '')
+    if not refresh_token:
+        raise ValueError('no refresh_token stored — reconnect required')
+
+    cid, sec = _whoop_creds()
+    if not cid or not sec:
+        raise ValueError('WHOOP client credentials not configured')
+
+    print(f'[whoop refresh] requesting new tokens  refresh={refresh_token[:12]}…')
     post_data = urllib.parse.urlencode({
         'grant_type':    'refresh_token',
         'refresh_token': refresh_token,
@@ -406,17 +432,74 @@ def _whoop_refresh(token_data: dict) -> dict:
     req = urllib.request.Request(
         WHOOP_TOKEN_URL, data=post_data, method='POST',
         headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        new_tok = json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            tok = json.loads(r.read().decode())
+    except urllib.request.HTTPError as e:
+        body = e.read().decode()
+        print(f'[whoop refresh] HTTP {e.code}: {body[:300]}')
+        if e.code == 401:
+            # Refresh token revoked — clear everything so UI shows reconnect button
+            for k in ('whoop_access_token', 'whoop_refresh_token',
+                      'whoop_token_expiry', 'sos_whoop_token'):
+                _supa_kv_set(k, None)
+            print('[whoop refresh] 401 → cleared all tokens, reconnect required')
+        raise ValueError(f'token refresh HTTP {e.code}: {body[:200]}')
 
-    # Preserve refresh_token if WHOOP doesn't return a new one
-    if not new_tok.get('refresh_token'):
-        new_tok['refresh_token'] = refresh_token
-    new_tok['fetched_at'] = int(time.time() * 1000)  # ms — matches client convention
+    # WHOOP sometimes omits a new refresh_token — preserve the existing one
+    if not tok.get('refresh_token'):
+        tok['refresh_token'] = refresh_token
 
-    _supa_kv_set('sos_whoop_token', new_tok)
-    print('[whoop] token refreshed and saved to Supabase')
-    return new_tok
+    _whoop_save_tokens(tok)
+    return tok['access_token']
+
+
+def _whoop_get_valid_token() -> 'str | None':
+    """
+    Return a valid WHOOP access token, refreshing proactively if the token
+    expires within 60 seconds. Returns None if not connected.
+    """
+    access_token  = _supa_kv_get('whoop_access_token')  or ''
+    refresh_token = _supa_kv_get('whoop_refresh_token') or ''
+    expires_at    = _supa_kv_get('whoop_token_expiry')  or 0
+
+    # Backward compat — migrate from old full-dict key on first use
+    if not access_token:
+        old = _supa_kv_get('sos_whoop_token')
+        if old and isinstance(old, dict):
+            access_token  = old.get('access_token', '')
+            refresh_token = old.get('refresh_token', '') or refresh_token
+            fa_ms         = old.get('fetched_at', 0)
+            fa_s          = fa_ms / 1000 if fa_ms > 1e10 else fa_ms
+            expires_at    = int(fa_s + old.get('expires_in', 0))
+            if access_token:
+                print('[whoop token] migrating from legacy sos_whoop_token key')
+                _supa_kv_set('whoop_access_token',  access_token)
+                _supa_kv_set('whoop_refresh_token', refresh_token)
+                _supa_kv_set('whoop_token_expiry',  expires_at)
+
+    if not access_token and not refresh_token:
+        print('[whoop token] no tokens stored')
+        return None
+
+    now = int(time.time())
+    ttl = expires_at - now if expires_at else None
+    print(f'[whoop token] access={access_token[:12]}…  ttl={ttl}s')
+
+    if ttl is not None and ttl < 60:
+        print(f'[whoop token] expires in {ttl}s — refreshing proactively')
+        access_token = _whoop_do_refresh()  # raises on failure
+
+    return access_token or None
+
+
+def _whoop_api_call(endpoint: str, access_token: str) -> bytes:
+    """Make a single WHOOP API call; returns raw response bytes."""
+    req = urllib.request.Request(
+        f'{WHOOP_API_BASE}/{endpoint}?limit=1',
+        headers={'Authorization': f'Bearer {access_token}', 'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return r.read()
 
 
 UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
@@ -745,6 +828,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/whoop/callback'):        self._whoop_callback()
         elif p.startswith('/whoop/data'):            self._whoop_data()
         elif p.startswith('/whoop/status'):          self._whoop_status()
+        elif p.startswith('/whoop/refresh'):         self._whoop_refresh_endpoint()
         elif p.startswith('/google/auth'):           self._google_auth()
         elif p.startswith('/google/callback'):       self._google_callback()
         elif p.startswith('/google/events'):         self._google_events()
@@ -834,27 +918,29 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
 
     def _whoop_callback(self):
-        qs      = parse_qs(urlparse(self.path).query)
-        code    = qs.get('code',  [''])[0]
-        err     = qs.get('error', [''])[0]
-        state   = qs.get('state', [''])[0]
+        """
+        OAuth callback — does the FULL token exchange server-side.
+        No localStorage, no client-side fetch. Works from Safari (PWA OAuth flow).
+        Stores access_token, refresh_token, expiry to Supabase, then redirects.
+        """
+        qs    = parse_qs(urlparse(self.path).query)
+        code  = qs.get('code',  [''])[0]
+        err   = qs.get('error', [''])[0]
+        state = qs.get('state', [''])[0]
 
         # ── State validation ──────────────────────────────────────────────────
         state_error = ''
         if err:
             state_error = f'WHOOP returned an error: {err}'
         elif not state:
-            # No state in callback — WHOOP may not send it if none was passed.
-            # Allow through but log a warning.
             print('[whoop callback] WARNING: no state in callback (CSRF unverified)')
         else:
             with _WHOOP_STATES_LOCK:
                 ts = _WHOOP_STATES.pop(state, None)
             if ts is None:
                 state_error = (
-                    f'OAuth state mismatch (token not found: {state[:8]}…). '
-                    'This can happen if the page was refreshed or the link expired. '
-                    'Please start the connection again from the dashboard.'
+                    f'OAuth state mismatch ({state[:8]}…). '
+                    'The link may have expired — please start the connection again.'
                 )
                 print(f'[whoop callback] invalid_state: {state[:8]}…')
             elif time.time() - ts > _WHOOP_STATE_TTL:
@@ -863,73 +949,67 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 print(f'[whoop callback] state OK ({state[:8]}…)')
 
-        # ── Serve the callback page ───────────────────────────────────────────
-        # Pass state_error into the JS so the page can show it immediately
-        # without waiting for the async token exchange.
-        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>WHOOP</title>
-<style>body{{background:#001218;color:#8EB8C8;font-family:monospace;font-size:13px;
-display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;gap:12px;}}
-#msg{{color:#00D4FF;letter-spacing:.08em;}}#err{{color:#FF4D6D;max-width:480px;text-align:center;line-height:1.6;}}
-a{{color:#00D4FF;text-decoration:none;}}</style></head><body>
-<div id="msg">Connecting WHOOP…</div><div id="err"></div>
-<script>(async()=>{{
-const code      = {json.dumps(code)};
-const whoopErr  = {json.dumps(err)};
-const stateErr  = {json.dumps(state_error)};
+        # ── Server-side token exchange ────────────────────────────────────────
+        exchange_error = ''
+        if not state_error and code:
+            cid, sec = _whoop_creds()
+            if not cid or not sec:
+                exchange_error = (
+                    'WHOOP Client ID / Secret not configured on the server. '
+                    'Add WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET as Fly.io secrets, '
+                    'or enter them in the Health Pulse settings first.'
+                )
+                print('[whoop callback] client credentials missing — cannot exchange code')
+            else:
+                post_data = urllib.parse.urlencode({
+                    'grant_type':   'authorization_code',
+                    'code':          code,
+                    'redirect_uri':  WHOOP_REDIRECT,
+                    'client_id':     cid,
+                    'client_secret': sec,
+                }).encode()
+                req = urllib.request.Request(
+                    WHOOP_TOKEN_URL, data=post_data, method='POST',
+                    headers={'Content-Type': 'application/x-www-form-urlencoded',
+                             'User-Agent': UA})
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        tok = json.loads(r.read().decode())
+                    _whoop_save_tokens(tok)
+                    print(f'[whoop callback] tokens stored ✓ '
+                          f'access={tok.get("access_token","")[:12]}…')
+                except urllib.request.HTTPError as e:
+                    body_txt = e.read().decode()
+                    exchange_error = f'Token exchange HTTP {e.code}: {body_txt[:200]}'
+                    print(f'[whoop callback] exchange error: {exchange_error}')
+                except Exception as e:
+                    exchange_error = f'Token exchange failed: {e}'
+                    print(f'[whoop callback] exchange error: {e}')
 
-const msgEl = document.getElementById('msg');
-const errEl = document.getElementById('err');
+        final_error = state_error or exchange_error
+        if final_error:
+            html_body = (
+                f'<div id="msg" style="color:#FF4D6D">Connection failed</div>'
+                f'<div id="err" style="max-width:480px;text-align:center;line-height:1.6">'
+                f'{final_error}<br><br><a href="/">← Back to dashboard</a></div>'
+            )
+        else:
+            html_body = (
+                '<div id="msg">✓ WHOOP Connected!</div>'
+                '<div id="err">Redirecting…</div>'
+                '<script>setTimeout(()=>window.location.href="/",900)</script>'
+            )
 
-if(stateErr){{
-  msgEl.textContent = 'Connection failed';
-  errEl.innerHTML   = stateErr + '<br><br><a href="/">← Back to dashboard</a>';
-  return;
-}}
-if(whoopErr){{
-  msgEl.textContent = 'Connection failed';
-  errEl.innerHTML   = 'WHOOP error: ' + whoopErr + '<br><br><a href="/">← Back to dashboard</a>';
-  return;
-}}
-if(!code){{
-  msgEl.textContent = 'Connection failed';
-  errEl.innerHTML   = 'No authorisation code received.<br><br><a href="/">← Back to dashboard</a>';
-  return;
-}}
-
-/* useLocalStorage stores values as JSON.stringify(value) — must JSON.parse */
-let cid='', sec='';
-try{{ cid = JSON.parse(localStorage.getItem('sos_whoop_client_id')  || '""'); }}
-catch{{ cid = localStorage.getItem('sos_whoop_client_id')  || ''; }}
-try{{ sec = JSON.parse(localStorage.getItem('sos_whoop_client_secret') || '""'); }}
-catch{{ sec = localStorage.getItem('sos_whoop_client_secret') || ''; }}
-
-if(!cid || !sec){{
-  msgEl.textContent = 'Connection failed';
-  errEl.innerHTML   = 'WHOOP Client ID or Secret not found in localStorage.<br>'
-    + 'Make sure you entered them on the Health Pulse module before connecting.<br><br>'
-    + '<a href="/">← Back to dashboard</a>';
-  return;
-}}
-
-msgEl.textContent = 'Exchanging token…';
-try{{
-  const r = await fetch('/whoop/token', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{code, client_id: cid, client_secret: sec}}),
-  }});
-  if(!r.ok) throw new Error(await r.text());
-  const t = await r.json();
-  t.fetched_at = Date.now();
-  localStorage.setItem('sos_whoop_token', JSON.stringify(t));
-  msgEl.textContent = '✓ Connected! Redirecting…';
-  setTimeout(() => window.location.href = '/', 800);
-}} catch(e) {{
-  msgEl.textContent = 'Connection failed';
-  errEl.innerHTML   = 'Token exchange error: ' + e.message + '<br><br><a href="/">← Back to dashboard</a>';
-}}
-}})()</script>
-</body></html>"""
+        html = (
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>WHOOP</title>'
+            '<style>body{background:#001218;color:#8EB8C8;font-family:monospace;font-size:13px;'
+            'display:flex;flex-direction:column;align-items:center;justify-content:center;'
+            'height:100vh;margin:0;gap:12px;}'
+            '#msg{color:#00D4FF;letter-spacing:.08em;}'
+            'a{color:#00D4FF;text-decoration:none;}</style></head><body>'
+            + html_body
+            + '</body></html>'
+        )
         body = html.encode()
         self.send_response(200)
         self.send_header('Content-Type',   'text/html; charset=utf-8')
@@ -938,29 +1018,38 @@ try{{
         self.wfile.write(body)
 
     def _whoop_token_exchange(self):
+        """
+        Legacy POST /whoop/token — still accepts code+credentials for backward compat
+        but now also does full server-side credential lookup as fallback.
+        """
         length = int(self.headers.get('Content-Length', 0))
         try:    payload = json.loads(self.rfile.read(length))
         except: self._json_error(400, 'Invalid JSON'); return
-        code, cid, sec = payload.get('code',''), payload.get('client_id',''), payload.get('client_secret','')
+        code = payload.get('code', '')
+        cid  = payload.get('client_id',     '') or WHOOP_CLIENT_ID
+        sec  = payload.get('client_secret', '') or WHOOP_CLIENT_SECRET
+        if not code:
+            self._json_error(400, 'Missing code'); return
+        if not cid or not sec:
+            cid2, sec2 = _whoop_creds()
+            cid = cid or cid2; sec = sec or sec2
         if not all([code, cid, sec]):
             self._json_error(400, 'Missing code/client_id/client_secret'); return
-        post_data = urllib.parse.urlencode({'grant_type': 'authorization_code', 'code': code,
-            'redirect_uri': WHOOP_REDIRECT, 'client_id': cid, 'client_secret': sec}).encode()
+        post_data = urllib.parse.urlencode({
+            'grant_type': 'authorization_code', 'code': code,
+            'redirect_uri': WHOOP_REDIRECT, 'client_id': cid, 'client_secret': sec,
+        }).encode()
         req = urllib.request.Request(WHOOP_TOKEN_URL, data=post_data, method='POST',
                   headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA})
         try:
-            with urllib.request.urlopen(req, timeout=15) as r: body = r.read()
+            with urllib.request.urlopen(req, timeout=15) as r:
+                body = r.read()
+                tok  = json.loads(body.decode())
         except urllib.request.HTTPError as e:
             self._json_error(e.code, e.read().decode()); return
         except Exception as e:
             self._json_error(502, str(e)); return
-        # Persist token server-side so _whoop_data can auto-refresh without the client
-        try:
-            tok = json.loads(body.decode())
-            tok['fetched_at'] = int(time.time() * 1000)  # ms — matches client convention
-            _supa_kv_set('sos_whoop_token', tok)
-        except Exception as save_e:
-            print(f'[whoop token] Supabase save failed (non-fatal): {save_e}')
+        _whoop_save_tokens(tok)
         self.send_response(200)
         self.send_header('Content-Type',   'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -974,24 +1063,29 @@ try{{
         if endpoint not in ALLOWED:
             self._json_error(400, f'endpoint must be one of {ALLOWED}'); return
 
-        # Prefer Supabase-stored token for auto-refresh capability;
-        # fall back to query-param token for backwards compatibility.
-        token_data   = _whoop_get_token()
-        access_token = token_data.get('access_token', '') if token_data else ''
-        if not access_token:
-            access_token = qs.get('token', [''])[0].strip()
+        # Get valid token — proactive refresh if expiring within 60s
+        try:
+            access_token = _whoop_get_valid_token()
+        except Exception as e:
+            self._json_error(401, f'WHOOP token error: {e}'); return
+
         if not access_token:
             self._json_error(401, 'WHOOP not connected — reconnect via Health Pulse'); return
 
+        print(f'[whoop data] GET /{endpoint}  token={access_token[:12]}…')
+
+        # First attempt
         try:
             body = _whoop_api_call(endpoint, access_token)
+            print(f'[whoop data] /{endpoint} → 200 ({len(body)}B)')
         except urllib.request.HTTPError as e:
-            if e.code == 401 and token_data:
-                # Silent refresh + retry — never show an expiry error to the user
+            if e.code == 401:
+                # 401 on a supposedly valid token — force refresh and retry once
+                print(f'[whoop data] 401 on /{endpoint} — forcing refresh + retry')
                 try:
-                    print(f'[whoop] 401 on {endpoint} — refreshing token silently…')
-                    new_td = _whoop_refresh(token_data)
-                    body   = _whoop_api_call(endpoint, new_td['access_token'])
+                    new_access = _whoop_do_refresh()
+                    body = _whoop_api_call(endpoint, new_access)
+                    print(f'[whoop data] /{endpoint} → 200 after refresh ({len(body)}B)')
                 except Exception as ref_e:
                     self._json_error(401, f'WHOOP refresh failed: {ref_e}'); return
             else:
@@ -1006,20 +1100,46 @@ try{{
         self.wfile.write(body)
 
     def _whoop_status(self):
-        """Return WHOOP connection status based on Supabase kv_store token."""
-        tok = _whoop_get_token()
-        if not tok or not tok.get('access_token'):
-            self._json({'connected': False}); return
-        fetched_at  = tok.get('fetched_at', 0)
-        expires_in  = tok.get('expires_in', 0)
-        # fetched_at is in ms
-        fetched_sec = fetched_at / 1000 if fetched_at > 1e10 else fetched_at
-        expires_at  = fetched_sec + expires_in
+        """Return WHOOP connection status and token expiry from Supabase."""
+        access_token  = _supa_kv_get('whoop_access_token')  or ''
+        refresh_token = _supa_kv_get('whoop_refresh_token') or ''
+        expires_at    = _supa_kv_get('whoop_token_expiry')  or 0
+        # Backward compat — fall back to legacy dict
+        if not access_token:
+            tok = _supa_kv_get('sos_whoop_token')
+            if tok and isinstance(tok, dict):
+                access_token  = tok.get('access_token', '')
+                refresh_token = tok.get('refresh_token', '')
+                fa_ms = tok.get('fetched_at', 0)
+                fa_s  = fa_ms / 1000 if fa_ms > 1e10 else fa_ms
+                expires_at = int(fa_s + tok.get('expires_in', 0))
+        if not access_token:
+            self._json({'connected': False, 'has_refresh': bool(refresh_token)}); return
+        now = int(time.time())
+        ttl = expires_at - now if expires_at else None
         self._json({
-            'connected':  True,
-            'expires_at': int(expires_at * 1000),     # ms for client
-            'expired':    expires_at < time.time(),
+            'connected':    True,
+            'expires_at':   expires_at * 1000,   # ms for client
+            'ttl_seconds':  ttl,
+            'expired':      ttl is not None and ttl < 0,
+            'needs_refresh': ttl is not None and ttl < 60,
+            'has_refresh':   bool(refresh_token),
         })
+
+    def _whoop_refresh_endpoint(self):
+        """GET /whoop/refresh — manually force a token refresh. Useful for debugging."""
+        print('[whoop refresh endpoint] manual refresh requested')
+        try:
+            new_access = _whoop_do_refresh()
+            expires_at = _supa_kv_get('whoop_token_expiry') or 0
+            self._json({
+                'ok':          True,
+                'access_token': new_access[:12] + '…',
+                'expires_at':   expires_at,
+                'ttl_seconds':  expires_at - int(time.time()) if expires_at else None,
+            })
+        except Exception as e:
+            self._json_error(500, f'Refresh failed: {e}')
 
     # ── Telegram webhook ──────────────────────────────────────────────────────
 
