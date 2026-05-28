@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile */
+/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -23,8 +23,254 @@ const VIEWS = {
   settings:  { label: 'Settings' },
 };
 
+/* ── TasksPreview — compact dashboard widget ──────────────
+   Shows the 3 most urgent open tasks from crm_items.
+   Priority sort: high → medium → low, then earliest due date.
+   Checkbox marks the task closed in Supabase instantly.
+   Expand any row to see full body, tags, contact, due date.
+   ─────────────────────────────────────────────────────── */
+const TASK_PRIO_ORDER = { high: 0, medium: 1, low: 2 };
+const TASK_PRIO_COLOR = { high: 'var(--neg)', medium: 'var(--warn)', low: 'var(--fg-4)' };
+const TASK_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+function TasksPreview({ onNavigate }) {
+  const [tasks,    setTasks]    = useStateApp([]);
+  const [loading,  setLoading]  = useStateApp(true);
+  const [expanded, setExpanded] = useStateApp(null);  // id of expanded row
+
+  useEffectApp(() => {
+    let cancelled = false;
+    (async () => {
+      const db = await (window._supaReady || Promise.resolve(window._supa || null));
+      if (!db || cancelled) { setLoading(false); return; }
+      const { data } = await db
+        .from('crm_items')
+        .select('*')
+        .eq('type', 'task')
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (!cancelled && data) {
+        const sorted = [...data].sort((a, b) => {
+          const pa = TASK_PRIO_ORDER[a.priority] ?? 1;
+          const pb = TASK_PRIO_ORDER[b.priority] ?? 1;
+          if (pa !== pb) return pa - pb;
+          // earlier due date wins; null due dates go last
+          if (a.due_date && b.due_date) return a.due_date < b.due_date ? -1 : 1;
+          if (a.due_date) return -1;
+          if (b.due_date) return 1;
+          return 0; // already sorted created_at desc from Supabase
+        });
+        setTasks(sorted);
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const markDone = async (e, id) => {
+    e.stopPropagation();
+    setTasks(prev => prev.filter(t => t.id !== id));
+    if (expanded === id) setExpanded(null);
+    const db = window._supa;
+    if (db) {
+      await db.from('crm_items')
+        .update({ status: 'closed', updated_at: new Date().toISOString() })
+        .eq('id', id);
+    }
+  };
+
+  const fmtDate = (d) => {
+    if (!d) return null;
+    const parts = d.split('-');
+    return `${TASK_MONTHS[+parts[1] - 1]} ${+parts[2]}`;
+  };
+
+  const isOverdue = (d) =>
+    d && new Date(d + 'T23:59:59') < new Date();
+
+  const preview   = tasks.slice(0, 3);
+  const totalOpen = tasks.length;
+
+  return (
+    <Card
+      icon="check-square"
+      label="tasks"
+      meta={loading ? '…' : `${totalOpen} open`}
+      action={
+        <span
+          onClick={() => onNavigate('crm')}
+          style={{
+            fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em',
+            color: 'var(--accent)', cursor: 'pointer', opacity: 0.85,
+          }}
+        >
+          VIEW ALL →
+        </span>
+      }
+    >
+      {/* ── loading ── */}
+      {loading && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>
+          loading…
+        </div>
+      )}
+
+      {/* ── empty ── */}
+      {!loading && preview.length === 0 && (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>
+          no open tasks
+        </div>
+      )}
+
+      {/* ── task list ── */}
+      {!loading && preview.length > 0 && (
+        <div>
+          {preview.map((task, i) => {
+            const isOpen  = expanded === task.id;
+            const overdue = isOverdue(task.due_date);
+            const isLast  = i === preview.length - 1;
+
+            return (
+              <div key={task.id}>
+
+                {/* task row */}
+                <div
+                  onClick={() => setExpanded(isOpen ? null : task.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '7px 0', cursor: 'pointer',
+                    borderBottom: (!isLast || isOpen) ? '1px solid var(--border)' : 'none',
+                  }}
+                >
+                  {/* checkbox — click to mark done */}
+                  <span
+                    onClick={e => markDone(e, task.id)}
+                    title="Mark complete"
+                    style={{
+                      width: 14, height: 14, borderRadius: 2, flexShrink: 0,
+                      border: '1px solid var(--border-strong)', background: 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'border-color 120ms, background 120ms',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'rgba(0,212,255,0.08)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.background = 'transparent'; }}
+                  />
+
+                  {/* title */}
+                  <span style={{
+                    flex: 1, fontFamily: 'var(--font-sans)', fontSize: 12,
+                    color: 'var(--fg-1)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {task.title}
+                  </span>
+
+                  {/* priority dot */}
+                  <span style={{
+                    width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                    background: TASK_PRIO_COLOR[task.priority] || 'var(--fg-4)',
+                  }} title={task.priority ? `${task.priority} priority` : undefined} />
+
+                  {/* due date */}
+                  {task.due_date && (
+                    <span style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0,
+                      color: overdue ? 'var(--neg)' : 'var(--fg-3)',
+                      letterSpacing: '0.04em',
+                    }}>
+                      {overdue ? '! ' : ''}{fmtDate(task.due_date)}
+                    </span>
+                  )}
+
+                  {/* chevron */}
+                  <Icon
+                    name={isOpen ? 'chevron-up' : 'chevron-down'}
+                    size={11}
+                    style={{ color: 'var(--fg-4)', flexShrink: 0 }}
+                  />
+                </div>
+
+                {/* expanded detail panel */}
+                {isOpen && (
+                  <div style={{
+                    padding: '8px 22px 10px',
+                    background: 'var(--bg-1)',
+                    borderBottom: !isLast ? '1px solid var(--border)' : 'none',
+                  }}>
+                    {task.body && (
+                      <p style={{
+                        fontFamily: 'var(--font-sans)', fontSize: 12,
+                        color: 'var(--fg-2)', margin: '0 0 8px', lineHeight: 1.55,
+                      }}>
+                        {task.body}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                      {task.priority && (
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 9,
+                          color: TASK_PRIO_COLOR[task.priority],
+                          letterSpacing: '0.08em', textTransform: 'uppercase',
+                        }}>
+                          {task.priority} priority
+                        </span>
+                      )}
+                      {task.due_date && (
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 9,
+                          color: overdue ? 'var(--neg)' : 'var(--fg-3)',
+                          letterSpacing: '0.06em',
+                        }}>
+                          due {task.due_date}
+                        </span>
+                      )}
+                      {task.contact_name && (
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 9,
+                          color: 'var(--fg-3)', letterSpacing: '0.06em',
+                        }}>
+                          {task.contact_name}
+                        </span>
+                      )}
+                      {task.tags?.length > 0 && task.tags.map(tag => (
+                        <span key={tag} style={{
+                          fontFamily: 'var(--font-mono)', fontSize: 9,
+                          color: 'var(--fg-4)', letterSpacing: '0.06em',
+                          background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 2,
+                        }}>
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* overflow footer */}
+          {totalOpen > 3 && (
+            <div
+              onClick={() => onNavigate('crm')}
+              style={{
+                paddingTop: 8, textAlign: 'center',
+                fontFamily: 'var(--font-mono)', fontSize: 10,
+                color: 'var(--fg-3)', cursor: 'pointer', letterSpacing: '0.06em',
+              }}
+            >
+              +{totalOpen - 3} more · view all →
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /* ── full dashboard grid (default view) ───────────────── */
-function DashboardGrid({ isMobile }) {
+function DashboardGrid({ isMobile, onNavigate }) {
   return (
     <div className="sos-dashboard-grid" style={{
       display: 'grid',
@@ -32,12 +278,18 @@ function DashboardGrid({ isMobile }) {
       gap: 12,
       gridAutoRows: 'minmax(min-content, auto)',
     }}>
-      {/* row 1 */}
+      {/* row 1: finance + health — unchanged */}
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Cash /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Investments /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 3' }}><HealthPulse /></div>
 
-      {/* row 2 */}
+      {/* tasks preview — own compact row on desktop (span 5 = same width as Investments)
+          mobile: stacks naturally after the row-1 trio                         */}
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}>
+        <TasksPreview onNavigate={onNavigate} />
+      </div>
+
+      {/* row 2 — Workouts + Checklist unchanged */}
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}><Workouts /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><DailyChecklist /></div>
 
@@ -631,7 +883,7 @@ function App() {
           {/* ── 16px side padding wrapper on mobile ── */}
           <div className={isMobile ? 'sos-content-pad' : undefined}>
             {isDashboard
-              ? <DashboardGrid isMobile={isMobile} />
+              ? <DashboardGrid isMobile={isMobile} onNavigate={setActive} />
               : <ModuleView id={active} isMobile={isMobile} />
             }
           </div>
