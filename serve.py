@@ -630,6 +630,12 @@ def _gpt_classify(text: str, source: str) -> dict:
         '  priority     : high | medium | low\n'
         '  due_date     : "YYYY-MM-DD" if a date is mentioned, else null\n'
         '  contact_name : full name of any person mentioned, else null\n'
+        '  recurring    : true if the task repeats on a schedule (phrases like "every day", '
+        '"daily", "every week", "weekly", "every month", "monthly", "remind me every", '
+        '"recurring", "each morning", "each night"); else false\n'
+        '  interval     : "daily" | "weekly" | "monthly" | null — set only when recurring is '
+        'true; infer from context ("every day" / "daily" → "daily", "every week" / "weekly" → '
+        '"weekly", "every month" / "monthly" → "monthly"); null otherwise\n'
         f'  tags         : JSON array of 1-5 lowercase tags\nToday is {today}.'
     )
     payload = {'model': 'gpt-4o-mini', 'temperature': 0.1, 'max_tokens': 350,
@@ -664,6 +670,8 @@ def _gpt_classify(text: str, source: str) -> dict:
 _CRM_FIELDS = frozenset({
     'type', 'title', 'body', 'priority', 'status',
     'due_date', 'contact_name', 'tags', 'source', 'raw_transcript',
+    # recurring-task fields — require ALTER TABLE (see deploy notes)
+    'recurring', 'interval', 'last_completed_at',
 })
 
 
@@ -703,6 +711,24 @@ def _sanitise_crm_item(item: dict) -> dict:
             VALID_TYPES = {'task','note','contact','meeting','follow_up','deal','reminder'}
             if v not in VALID_TYPES:
                 v = 'task'
+
+        elif k == 'recurring':
+            # Ensure proper boolean — GPT may return True/False or "true"/"false"
+            if isinstance(v, str):
+                v = v.lower() == 'true'
+            else:
+                v = bool(v) if v is not None else False
+
+        elif k == 'interval':
+            # Only allow known intervals; null everything else
+            VALID_INTERVALS = {'daily', 'weekly', 'monthly'}
+            v = v if isinstance(v, str) and v.strip().lower() in VALID_INTERVALS else None
+            if v:
+                v = v.strip().lower()
+
+        elif k == 'last_completed_at':
+            # Always null on creation — never trust a GPT-provided value
+            v = None
 
         out[k] = v
 

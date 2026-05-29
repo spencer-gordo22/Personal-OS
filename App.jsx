@@ -23,6 +23,77 @@ const VIEWS = {
   settings:  { label: 'Settings' },
 };
 
+/* ── Confetti burst — vanilla canvas, no external libs ────
+   Rains cyan, white, and gold rectangles + circles for 2.2s.
+   Called whenever a task is checked off.
+   ─────────────────────────────────────────────────────── */
+function launchConfetti() {
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText =
+    'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  document.body.appendChild(canvas);
+  const ctx  = canvas.getContext('2d');
+
+  // Cyan-weighted palette: #00D4FF, white, gold
+  const COLS = ['#00D4FF','#00D4FF','#FFFFFF','#FFD700','#00D4FF','#FFFFFF'];
+  const N    = 150;
+  const parts = Array.from({ length: N }, () => {
+    const isCirc = Math.random() > 0.72;
+    return {
+      x:    Math.random() * canvas.width,
+      y:    -12 - Math.random() * canvas.height * 0.45,  // staggered above viewport
+      w:    Math.random() * 9 + 5,
+      h:    Math.random() * 5 + 3,
+      r:    Math.random() * 4 + 2,
+      vx:   (Math.random() - 0.5) * 4.5,
+      vy:   Math.random() * 3.5 + 1.8,
+      rot:  Math.random() * Math.PI * 2,
+      rotV: (Math.random() - 0.5) * 0.22,
+      col:  COLS[Math.floor(Math.random() * COLS.length)],
+      circ: isCirc,
+    };
+  });
+
+  const t0  = performance.now();
+  const DUR = 2200;
+
+  (function tick(now) {
+    const elapsed = now - t0;
+    if (elapsed > DUR) { canvas.remove(); return; }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Fade out last 40 % of the animation
+    const alpha = elapsed < DUR * 0.6
+      ? 1
+      : 1 - (elapsed - DUR * 0.6) / (DUR * 0.4);
+
+    for (const p of parts) {
+      p.x   += p.vx;
+      p.y   += p.vy;
+      p.vy  += 0.09;    // gravity
+      p.vx  *= 0.993;   // air drag
+      p.rot += p.rotV;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, alpha);
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.col;
+      if (p.circ) {
+        ctx.beginPath();
+        ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      }
+      ctx.restore();
+    }
+    requestAnimationFrame(tick);
+  })(t0);
+}
+
 /* ── TasksPreview — compact dashboard widget ──────────────
    Shows the 3 most urgent open tasks from crm_items.
    Priority sort: high → medium → low, then earliest due date.
@@ -34,237 +105,249 @@ const TASK_PRIO_COLOR = { high: 'var(--neg)', medium: 'var(--warn)', low: 'var(-
 const TASK_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
 
 function TasksPreview({ onNavigate }) {
-  const [tasks,    setTasks]    = useStateApp([]);
-  const [loading,  setLoading]  = useStateApp(true);
-  const [expanded, setExpanded] = useStateApp(null);  // id of expanded row
+  /* ── state ── */
+  const [tasks,        setTasks]        = useStateApp([]);
+  const [loading,      setLoading]      = useStateApp(true);
+  const [expanded,     setExpanded]     = useStateApp(null);
+  const [newTitle,     setNewTitle]     = useStateApp('');
+  const [newPriority,  setNewPriority]  = useStateApp('medium');
+  const [newDueDate,   setNewDueDate]   = useStateApp('');
+  const [newRecurring, setNewRecurring] = useStateApp(false);
+  const [newInterval,  setNewInterval]  = useStateApp('daily');
+  const [adding,       setAdding]       = useStateApp(false);
 
+  /* ── recurring reset helper ── */
+  function isRecurringDue(task) {
+    if (!task.recurring) return false;
+    if (!task.last_completed_at) return true;
+    const elapsed = Date.now() - new Date(task.last_completed_at).getTime();
+    const thresh  = { daily: 86400000, weekly: 604800000, monthly: 2592000000 };
+    return elapsed >= (thresh[task.interval] || thresh.daily);
+  }
+
+  /* ── sort: high→medium→low, then earliest due date ── */
+  function sortTasks(list) {
+    const P = { high: 0, medium: 1, low: 2 };
+    return [...list].sort((a, b) => {
+      const pa = P[a.priority] ?? 1, pb = P[b.priority] ?? 1;
+      if (pa !== pb) return pa - pb;
+      if (a.due_date && b.due_date) return a.due_date < b.due_date ? -1 : 1;
+      if (a.due_date) return -1;
+      if (b.due_date) return 1;
+      return 0;
+    });
+  }
+
+  const fmtDate   = (d) => { if (!d) return null; const [,m,day] = d.split('-'); return `${TASK_MONTHS[+m-1]} ${+day}`; };
+  const isOverdue = (d) => d && new Date(d + 'T23:59:59') < new Date();
+
+  /* ── load: open tasks + all recurring (to detect reset) ── */
   useEffectApp(() => {
     let cancelled = false;
     (async () => {
       const db = await (window._supaReady || Promise.resolve(window._supa || null));
       if (!db || cancelled) { setLoading(false); return; }
-      const { data } = await db
-        .from('crm_items')
-        .select('*')
-        .eq('type', 'task')
-        .eq('status', 'open')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (!cancelled && data) {
-        const sorted = [...data].sort((a, b) => {
-          const pa = TASK_PRIO_ORDER[a.priority] ?? 1;
-          const pb = TASK_PRIO_ORDER[b.priority] ?? 1;
-          if (pa !== pb) return pa - pb;
-          // earlier due date wins; null due dates go last
-          if (a.due_date && b.due_date) return a.due_date < b.due_date ? -1 : 1;
-          if (a.due_date) return -1;
-          if (b.due_date) return 1;
-          return 0; // already sorted created_at desc from Supabase
-        });
-        setTasks(sorted);
+      const [{ data: openData }, { data: recurData }] = await Promise.all([
+        db.from('crm_items').select('*').eq('type','task').eq('status','open')
+          .order('created_at', { ascending: false }).limit(100),
+        db.from('crm_items').select('*').eq('type','task').eq('recurring',true)
+          .order('created_at', { ascending: false }).limit(50),
+      ]);
+      if (!cancelled) {
+        const seen = new Set(), merged = [];
+        for (const t of [...(openData||[]), ...(recurData||[])]) {
+          if (!seen.has(t.id)) { seen.add(t.id); merged.push(t); }
+        }
+        setTasks(merged);
+        setLoading(false);
       }
-      if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
   }, []);
 
+  /* ── mark done: confetti + recurring logic ── */
   const markDone = async (e, id) => {
     e.stopPropagation();
-    setTasks(prev => prev.filter(t => t.id !== id));
-    if (expanded === id) setExpanded(null);
-    const db = window._supa;
-    if (db) {
-      await db.from('crm_items')
-        .update({ status: 'closed', updated_at: new Date().toISOString() })
-        .eq('id', id);
+    launchConfetti();
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    const now = new Date().toISOString();
+    if (task.recurring) {
+      setTasks(prev => prev.map(t =>
+        t.id === id ? { ...t, status: 'closed', last_completed_at: now } : t
+      ));
+    } else {
+      if (expanded === id) setExpanded(null);
+      setTasks(prev => prev.filter(t => t.id !== id));
     }
+    const db = window._supa;
+    if (db) await db.from('crm_items').update({ status:'closed', last_completed_at:now, updated_at:now }).eq('id', id);
   };
 
-  const fmtDate = (d) => {
-    if (!d) return null;
-    const parts = d.split('-');
-    return `${TASK_MONTHS[+parts[1] - 1]} ${+parts[2]}`;
+  /* ── add task to Supabase ── */
+  const addTask = async () => {
+    const title = newTitle.trim();
+    if (!title || adding) return;
+    setAdding(true);
+    const db = await (window._supaReady || Promise.resolve(window._supa || null));
+    if (!db) { setAdding(false); return; }
+    const { data, error } = await db.from('crm_items').insert({
+      type:'task', title, status:'open',
+      priority:  newPriority,
+      due_date:  (!newRecurring && newDueDate) ? newDueDate : null,
+      recurring: newRecurring,
+      interval:  newRecurring ? newInterval : null,
+      source:'manual', body:'', tags:[],
+    }).select().single();
+    if (!error && data) setTasks(prev => [...prev, data]);
+    setNewTitle(''); setNewDueDate(''); setNewRecurring(false);
+    setAdding(false);
   };
 
-  const isOverdue = (d) =>
-    d && new Date(d + 'T23:59:59') < new Date();
-
-  const preview   = tasks.slice(0, 3);
-  const totalOpen = tasks.length;
+  /* ── computed ── */
+  const visible = sortTasks(tasks.filter(t => t.status === 'open' || isRecurringDue(t)));
+  const typing  = newTitle.trim().length > 0;
 
   return (
     <Card
       icon="check-square"
       label="tasks"
-      meta={loading ? '…' : `${totalOpen} open`}
+      meta={loading ? '…' : `${visible.length} open`}
       action={
-        <span
-          onClick={() => onNavigate('crm')}
-          style={{
-            fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em',
-            color: 'var(--accent)', cursor: 'pointer', opacity: 0.85,
-          }}
-        >
-          VIEW ALL →
-        </span>
+        <span onClick={() => onNavigate('crm')} style={{
+          fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em',
+          color: 'var(--accent)', cursor: 'pointer', opacity: 0.85,
+        }}>VIEW ALL →</span>
       }
     >
-      {/* ── loading ── */}
-      {loading && (
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>
-          loading…
-        </div>
-      )}
-
-      {/* ── empty ── */}
-      {!loading && preview.length === 0 && (
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>
-          no open tasks
-        </div>
-      )}
-
       {/* ── task list ── */}
-      {!loading && preview.length > 0 && (
-        <div>
-          {preview.map((task, i) => {
-            const isOpen  = expanded === task.id;
-            const overdue = isOverdue(task.due_date);
-            const isLast  = i === preview.length - 1;
-
-            return (
-              <div key={task.id}>
-
-                {/* task row */}
-                <div
-                  onClick={() => setExpanded(isOpen ? null : task.id)}
+      <div style={{ overflowY: 'auto', maxHeight: 300 }}>
+        {loading && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>loading…</div>}
+        {!loading && visible.length === 0 && (
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>all clear ✓ · add a task below</div>
+        )}
+        {!loading && visible.map((task, i) => {
+          const isOpen  = expanded === task.id;
+          const isLast  = i === visible.length - 1;
+          const overdue = isOverdue(task.due_date);
+          return (
+            <div key={task.id}>
+              {/* row */}
+              <div
+                onClick={() => setExpanded(isOpen ? null : task.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 7,
+                  padding: '7px 0', cursor: 'pointer',
+                  borderBottom: (!isLast || isOpen) ? '1px solid var(--border)' : 'none',
+                }}
+              >
+                {/* checkbox */}
+                <span
+                  onClick={e => markDone(e, task.id)}
+                  title="Mark complete"
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 8,
-                    padding: '7px 0', cursor: 'pointer',
-                    borderBottom: (!isLast || isOpen) ? '1px solid var(--border)' : 'none',
+                    width: 14, height: 14, borderRadius: 2, flexShrink: 0,
+                    border: '1px solid var(--border-strong)', background: 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', transition: 'border-color 120ms, background 120ms',
                   }}
-                >
-                  {/* checkbox — click to mark done */}
-                  <span
-                    onClick={e => markDone(e, task.id)}
-                    title="Mark complete"
-                    style={{
-                      width: 14, height: 14, borderRadius: 2, flexShrink: 0,
-                      border: '1px solid var(--border-strong)', background: 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      cursor: 'pointer',
-                      transition: 'border-color 120ms, background 120ms',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.background = 'rgba(0,212,255,0.08)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-strong)'; e.currentTarget.style.background = 'transparent'; }}
-                  />
-
-                  {/* title */}
-                  <span style={{
-                    flex: 1, fontFamily: 'var(--font-sans)', fontSize: 12,
-                    color: 'var(--fg-1)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }}>
-                    {task.title}
-                  </span>
-
-                  {/* priority dot */}
-                  <span style={{
-                    width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                    background: TASK_PRIO_COLOR[task.priority] || 'var(--fg-4)',
-                  }} title={task.priority ? `${task.priority} priority` : undefined} />
-
-                  {/* due date */}
-                  {task.due_date && (
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0,
-                      color: overdue ? 'var(--neg)' : 'var(--fg-3)',
-                      letterSpacing: '0.04em',
-                    }}>
-                      {overdue ? '! ' : ''}{fmtDate(task.due_date)}
-                    </span>
-                  )}
-
-                  {/* chevron */}
-                  <Icon
-                    name={isOpen ? 'chevron-up' : 'chevron-down'}
-                    size={11}
-                    style={{ color: 'var(--fg-4)', flexShrink: 0 }}
-                  />
-                </div>
-
-                {/* expanded detail panel */}
-                {isOpen && (
-                  <div style={{
-                    padding: '8px 22px 10px',
-                    background: 'var(--bg-1)',
-                    borderBottom: !isLast ? '1px solid var(--border)' : 'none',
-                  }}>
-                    {task.body && (
-                      <p style={{
-                        fontFamily: 'var(--font-sans)', fontSize: 12,
-                        color: 'var(--fg-2)', margin: '0 0 8px', lineHeight: 1.55,
-                      }}>
-                        {task.body}
-                      </p>
-                    )}
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                      {task.priority && (
-                        <span style={{
-                          fontFamily: 'var(--font-mono)', fontSize: 9,
-                          color: TASK_PRIO_COLOR[task.priority],
-                          letterSpacing: '0.08em', textTransform: 'uppercase',
-                        }}>
-                          {task.priority} priority
-                        </span>
-                      )}
-                      {task.due_date && (
-                        <span style={{
-                          fontFamily: 'var(--font-mono)', fontSize: 9,
-                          color: overdue ? 'var(--neg)' : 'var(--fg-3)',
-                          letterSpacing: '0.06em',
-                        }}>
-                          due {task.due_date}
-                        </span>
-                      )}
-                      {task.contact_name && (
-                        <span style={{
-                          fontFamily: 'var(--font-mono)', fontSize: 9,
-                          color: 'var(--fg-3)', letterSpacing: '0.06em',
-                        }}>
-                          {task.contact_name}
-                        </span>
-                      )}
-                      {task.tags?.length > 0 && task.tags.map(tag => (
-                        <span key={tag} style={{
-                          fontFamily: 'var(--font-mono)', fontSize: 9,
-                          color: 'var(--fg-4)', letterSpacing: '0.06em',
-                          background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 2,
-                        }}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                  onMouseEnter={e => { e.currentTarget.style.borderColor='var(--accent)'; e.currentTarget.style.background='rgba(0,212,255,0.1)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor='var(--border-strong)'; e.currentTarget.style.background='transparent'; }}
+                />
+                {/* recurring loop icon */}
+                {task.recurring && (
+                  <Icon name="repeat" size={9} style={{ color: 'var(--fg-4)', flexShrink: 0 }} title={`repeats ${task.interval||'daily'}`} />
                 )}
+                {/* title */}
+                <span style={{
+                  flex: 1, fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--fg-1)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{task.title}</span>
+                {/* priority dot */}
+                <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: TASK_PRIO_COLOR[task.priority] || 'var(--fg-4)' }} />
+                {/* due date */}
+                {task.due_date && (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0, color: overdue ? 'var(--neg)' : 'var(--fg-3)', letterSpacing: '0.04em' }}>
+                    {overdue ? '! ' : ''}{fmtDate(task.due_date)}
+                  </span>
+                )}
+                <Icon name={isOpen ? 'chevron-up' : 'chevron-down'} size={11} style={{ color: 'var(--fg-4)', flexShrink: 0 }} />
               </div>
-            );
-          })}
 
-          {/* overflow footer */}
-          {totalOpen > 3 && (
-            <div
-              onClick={() => onNavigate('crm')}
-              style={{
-                paddingTop: 8, textAlign: 'center',
-                fontFamily: 'var(--font-mono)', fontSize: 10,
-                color: 'var(--fg-3)', cursor: 'pointer', letterSpacing: '0.06em',
-              }}
-            >
-              +{totalOpen - 3} more · view all →
+              {/* expanded detail */}
+              {isOpen && (
+                <div style={{ padding: '8px 22px 10px', background: 'var(--bg-1)', borderBottom: !isLast ? '1px solid var(--border)' : 'none' }}>
+                  {task.body && <p style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--fg-2)', margin: '0 0 8px', lineHeight: 1.55 }}>{task.body}</p>}
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {task.priority && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: TASK_PRIO_COLOR[task.priority], letterSpacing: '0.08em', textTransform: 'uppercase' }}>{task.priority} priority</span>}
+                    {task.due_date && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: overdue ? 'var(--neg)' : 'var(--fg-3)', letterSpacing: '0.06em' }}>due {task.due_date}</span>}
+                    {task.recurring && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', letterSpacing: '0.06em' }}>↻ {task.interval||'daily'}</span>}
+                    {task.contact_name && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)', letterSpacing: '0.06em' }}>{task.contact_name}</span>}
+                    {task.tags?.length > 0 && task.tags.map(tag => (
+                      <span key={tag} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', background: 'var(--bg-3)', padding: '1px 5px', borderRadius: 2 }}>{tag}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
+          );
+        })}
+      </div>
+
+      {/* ── add task form ── */}
+      <div style={{ borderTop: '1px solid var(--border)', marginTop: visible.length > 0 ? 8 : 0, paddingTop: 10 }}>
+        {/* input + priority + add */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Icon name="plus" size={12} style={{ color: 'var(--fg-4)', flexShrink: 0 }} />
+          <input
+            value={newTitle}
+            onChange={e => setNewTitle(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && addTask()}
+            placeholder="add task · press enter"
+            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--fg-1)' }}
+          />
+          {/* H / M / L priority chips */}
+          {['high','medium','low'].map(p => (
+            <span key={p} onClick={() => setNewPriority(p)} title={`${p} priority`} style={{
+              width: 18, height: 18, borderRadius: 2, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 8,
+              background: newPriority === p ? TASK_PRIO_COLOR[p] : 'transparent',
+              color:      newPriority === p ? '#001218'           : TASK_PRIO_COLOR[p],
+              border:     `1px solid ${TASK_PRIO_COLOR[p]}`,
+              opacity:    newPriority === p ? 1 : 0.4,
+              transition: 'opacity 120ms, background 120ms',
+            }}>{p[0].toUpperCase()}</span>
+          ))}
+          {typing && (
+            <span onClick={addTask} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0, color: adding ? 'var(--fg-4)' : 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em' }}>
+              {adding ? '…' : 'ADD'}
+            </span>
           )}
         </div>
-      )}
+
+        {/* recurring toggle + interval + due date (appear while typing) */}
+        {typing && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingLeft: 18, marginTop: 6, flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em', color: newRecurring ? 'var(--accent)' : 'var(--fg-4)', userSelect: 'none' }}>
+              <input type="checkbox" checked={newRecurring} onChange={e => setNewRecurring(e.target.checked)} style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
+              RECURRING
+            </label>
+            {newRecurring && ['daily','weekly','monthly'].map(iv => (
+              <span key={iv} onClick={() => setNewInterval(iv)} style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, cursor: 'pointer',
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+                color:        newInterval === iv ? 'var(--accent)' : 'var(--fg-4)',
+                borderBottom: `1px solid ${newInterval === iv ? 'var(--accent)' : 'transparent'}`,
+                paddingBottom: 1,
+              }}>{iv}</span>
+            ))}
+            {!newRecurring && (
+              <input type="date" value={newDueDate} onChange={e => setNewDueDate(e.target.value)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', outline: 'none', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)', cursor: 'pointer' }} />
+            )}
+          </div>
+        )}
+      </div>
     </Card>
   );
 }
