@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon */
+/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -542,18 +542,18 @@ function DashboardGrid({ isMobile, onNavigate }) {
       gap: 12,
       gridAutoRows: 'minmax(min-content, auto)',
     }}>
-      {/* row 1: SAT Prep tracker (top-left, where Chase Checking used to be) + finance + health */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><SAT /></div>
+      {/* row 1: Chase Checking (restored, top-left) + finance + health */}
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Cash /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Investments /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 3' }}><HealthPulse /></div>
 
-      {/* tasks preview — own compact row on desktop (span 5 = same width as Investments)
-          mobile: stacks naturally after the row-1 trio                         */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}>
+      {/* row 2: SAT Prep tracker + Tasks preview — both coexist with Chase above */}
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}><SAT /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}>
         <TasksPreview onNavigate={onNavigate} />
       </div>
 
-      {/* row 2 — Workouts + Checklist unchanged */}
+      {/* row 3 — Workouts + Checklist unchanged */}
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}><Workouts /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><DailyChecklist /></div>
 
@@ -587,7 +587,8 @@ function ModuleView({ id, isMobile }) {
   const cols = isMobile ? '1fr' : 'repeat(12,1fr)';
   if (id === 'finance') return (
     <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 12 }}>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 12' }}><Investments /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Cash /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 7' }}><Investments /></div>
     </div>
   );
   if (id === 'health') return (

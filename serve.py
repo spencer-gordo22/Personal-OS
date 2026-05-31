@@ -64,6 +64,15 @@ VAPID_PUBLIC_KEY  = os.environ.get('VAPID_PUBLIC_KEY',  '').strip()
 VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '').strip()
 VAPID_SUBJECT     = os.environ.get('VAPID_SUBJECT',     'mailto:admin@spencer-os.fly.dev').strip()
 
+PLAID_CLIENT_ID = os.environ.get('PLAID_CLIENT_ID', '').strip()
+PLAID_SECRET    = os.environ.get('PLAID_SECRET',    '').strip()
+PLAID_ENV       = os.environ.get('PLAID_ENV', 'sandbox').strip()   # sandbox | development | production
+PLAID_API_BASE  = {
+    'sandbox':     'https://sandbox.plaid.com',
+    'development': 'https://development.plaid.com',
+    'production':  'https://production.plaid.com',
+}.get(PLAID_ENV, 'https://sandbox.plaid.com')
+
 WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
@@ -1051,6 +1060,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         if   p.startswith('/api/quotes'):            self._proxy_quotes()
         elif p.startswith('/api/config'):            self._api_config()
         elif p.startswith('/api/debug/crm'):         self._debug_crm()
+        elif p.startswith('/api/plaid/config'):      self._plaid_config()
+        elif p.startswith('/api/plaid/balance'):     self._plaid_balance()
+        elif p.startswith('/api/plaid/transactions'):self._plaid_transactions()
         elif p.startswith('/api/push/vapid-key'):    self._push_vapid_key()
         elif p.startswith('/whoop/auth'):            self._whoop_auth()
         elif p.startswith('/whoop/callback'):        self._whoop_callback()
@@ -1068,6 +1080,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         p = self.path
         if   p.startswith('/whoop/token'):              self._whoop_token_exchange()
+        elif p.startswith('/api/plaid/create-link-token'): self._plaid_link_token()
+        elif p.startswith('/api/plaid/link-token'):     self._plaid_link_token()
+        elif p.startswith('/api/plaid/exchange-token'): self._plaid_exchange_token()
         elif p.startswith('/api/push/subscribe'):       self._push_subscribe()
         elif p.startswith('/api/push/send'):            self._push_send()
         elif p.startswith('/google/disconnect'):        self._google_disconnect()
@@ -1626,6 +1641,133 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-Length', str(len(resp)))
         self.end_headers()
         self.wfile.write(resp)
+
+    # ── Plaid ─────────────────────────────────────────────────────────────────
+
+    def _plaid_post(self, path: str, data: dict) -> bytes:
+        payload = {**data, 'client_id': PLAID_CLIENT_ID, 'secret': PLAID_SECRET}
+        body    = json.dumps(payload).encode()
+        req     = urllib.request.Request(f'{PLAID_API_BASE}{path}', data=body,
+                      headers={'Content-Type': 'application/json', 'User-Agent': UA})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read()
+
+    def _plaid_config(self):
+        body = json.dumps({
+            'env':   PLAID_ENV,
+            'ready': bool(PLAID_CLIENT_ID and PLAID_SECRET),
+        }).encode()
+        self.send_response(200)
+        self.send_header('Content-Type',   'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _plaid_link_token(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured — set PLAID_CLIENT_ID + PLAID_SECRET'); return
+        try:
+            body = self._plaid_post('/link/token/create', {
+                'user':          {'client_user_id': 'spencer'},
+                'client_name':   'Spencer OS',
+                'products':      ['transactions'],
+                'country_codes': ['US'],
+                'language':      'en',
+            })
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode())
+        except Exception as e:
+            self._json_error(502, str(e))
+
+    def _plaid_exchange_token(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured'); return
+        length = int(self.headers.get('Content-Length', 0))
+        try:    payload = json.loads(self.rfile.read(length))
+        except: self._json_error(400, 'Invalid JSON'); return
+        public_token = payload.get('public_token', '')
+        if not public_token:
+            self._json_error(400, 'Missing public_token'); return
+        try:
+            body = self._plaid_post('/item/public_token/exchange',
+                                    {'public_token': public_token})
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            self._json_error(e.code, e.read().decode())
+        except Exception as e:
+            self._json_error(502, str(e))
+
+    def _plaid_balance(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured'); return
+        qs           = parse_qs(urlparse(self.path).query)
+        access_token = qs.get('access_token', [''])[0].strip()
+        if not access_token:
+            self._json_error(400, 'Missing access_token'); return
+        try:
+            body = self._plaid_post('/accounts/balance/get',
+                                    {'access_token': access_token})
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            raw = e.read().decode()
+            try:
+                err = json.loads(raw)
+                if err.get('error_code') == 'ITEM_LOGIN_REQUIRED':
+                    self._json({'reconnect_required': True,
+                                'error_code': 'ITEM_LOGIN_REQUIRED',
+                                'error': 'Bank login expired — please reconnect'}); return
+            except Exception: pass
+            self._json_error(e.code, raw)
+        except Exception as e:
+            self._json_error(502, str(e))
+
+    def _plaid_transactions(self):
+        if not PLAID_CLIENT_ID or not PLAID_SECRET:
+            self._json_error(503, 'Plaid not configured'); return
+        qs           = parse_qs(urlparse(self.path).query)
+        access_token = qs.get('access_token', [''])[0].strip()
+        if not access_token:
+            self._json_error(400, 'Missing access_token'); return
+        today = datetime.date.today()
+        start = (today - datetime.timedelta(days=30)).isoformat()
+        end   = today.isoformat()
+        try:
+            body = self._plaid_post('/transactions/get', {
+                'access_token': access_token,
+                'start_date':   start,
+                'end_date':     end,
+                'count':        50,
+            })
+            self.send_response(200)
+            self.send_header('Content-Type',   'application/json')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except urllib.request.HTTPError as e:
+            raw = e.read().decode()
+            try:
+                err = json.loads(raw)
+                if err.get('error_code') == 'ITEM_LOGIN_REQUIRED':
+                    self._json({'reconnect_required': True,
+                                'error_code': 'ITEM_LOGIN_REQUIRED',
+                                'error': 'Bank login expired — please reconnect'}); return
+            except Exception: pass
+            self._json_error(e.code, raw)
+        except Exception as e:
+            self._json_error(502, str(e))
 
     # ── Google Calendar ───────────────────────────────────────────────────────
 
