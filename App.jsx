@@ -23,75 +23,86 @@ const VIEWS = {
   settings:  { label: 'Settings' },
 };
 
-/* ── Confetti burst — vanilla canvas, no external libs ────
-   Rains cyan, white, and gold rectangles + circles for 2.2s.
-   Called whenever a task is checked off.
+/* ── triggerConfetti ────────────────────────────────────────
+   Standalone canvas confetti — no libraries, no async, no
+   setTimeout. Call it directly from a synchronous click handler.
+
+   Canvas: position:fixed top:0 left:0 100vw×100vh z-9999
+   pointer-events:none so nothing behind it is blocked.
+   150 particles (rectangles + circles) in cyan, white, gold.
+   Runs for 2.5 seconds then removes itself from the DOM.
    ─────────────────────────────────────────────────────── */
-function launchConfetti() {
+function triggerConfetti() {
   const canvas = document.createElement('canvas');
-  canvas.style.cssText =
-    'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';
+  canvas.style.position      = 'fixed';
+  canvas.style.top           = '0';
+  canvas.style.left          = '0';
+  canvas.style.width         = '100vw';
+  canvas.style.height        = '100vh';
+  canvas.style.zIndex        = '9999';
+  canvas.style.pointerEvents = 'none';
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
   document.body.appendChild(canvas);
-  const ctx  = canvas.getContext('2d');
 
-  // Cyan-weighted palette: #00D4FF, white, gold
-  const COLS = ['#00D4FF','#00D4FF','#FFFFFF','#FFD700','#00D4FF','#FFFFFF'];
-  const N    = 150;
-  const parts = Array.from({ length: N }, () => {
-    const isCirc = Math.random() > 0.72;
-    return {
-      x:    Math.random() * canvas.width,
-      y:    -12 - Math.random() * canvas.height * 0.45,  // staggered above viewport
-      w:    Math.random() * 9 + 5,
-      h:    Math.random() * 5 + 3,
-      r:    Math.random() * 4 + 2,
-      vx:   (Math.random() - 0.5) * 4.5,
-      vy:   Math.random() * 3.5 + 1.8,
-      rot:  Math.random() * Math.PI * 2,
-      rotV: (Math.random() - 0.5) * 0.22,
-      col:  COLS[Math.floor(Math.random() * COLS.length)],
-      circ: isCirc,
-    };
-  });
+  const ctx      = canvas.getContext('2d');
+  const COLORS   = ['#00D4FF', '#FFFFFF', '#FFD700'];
+  const TOTAL    = 150;
+  const DURATION = 2500;  // ms
 
-  const t0  = performance.now();
-  const DUR = 2200;
+  const particles = [];
+  for (let i = 0; i < TOTAL; i++) {
+    particles.push({
+      x:      Math.random() * canvas.width,
+      y:      -10 - Math.random() * canvas.height * 0.5,
+      vx:     (Math.random() - 0.5) * 6,
+      vy:     2 + Math.random() * 5,
+      rot:    Math.random() * Math.PI * 2,
+      rotV:   (Math.random() - 0.5) * 0.3,
+      w:      5 + Math.random() * 10,
+      h:      3 + Math.random() * 6,
+      radius: 2 + Math.random() * 4,
+      color:  COLORS[i % COLORS.length],
+      isCirc: Math.random() > 0.65,
+    });
+  }
 
-  (function tick(now) {
-    const elapsed = now - t0;
-    if (elapsed > DUR) { canvas.remove(); return; }
+  const startMs = Date.now();
+
+  function frame() {
+    const elapsed = Date.now() - startMs;
+    if (elapsed >= DURATION) { canvas.remove(); return; }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Fade out last 40 % of the animation
-    const alpha = elapsed < DUR * 0.6
+    const fadeThresh = DURATION * 0.65;
+    const alpha      = elapsed < fadeThresh
       ? 1
-      : 1 - (elapsed - DUR * 0.6) / (DUR * 0.4);
+      : 1 - (elapsed - fadeThresh) / (DURATION - fadeThresh);
 
-    for (const p of parts) {
+    for (const p of particles) {
       p.x   += p.vx;
       p.y   += p.vy;
-      p.vy  += 0.09;    // gravity
-      p.vx  *= 0.993;   // air drag
+      p.vy  += 0.12;
+      p.vx  *= 0.99;
       p.rot += p.rotV;
-
       ctx.save();
       ctx.globalAlpha = Math.max(0, alpha);
+      ctx.fillStyle   = p.color;
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rot);
-      ctx.fillStyle = p.col;
-      if (p.circ) {
+      if (p.isCirc) {
         ctx.beginPath();
-        ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+        ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
         ctx.fill();
       } else {
         ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
       }
       ctx.restore();
     }
-    requestAnimationFrame(tick);
-  })(t0);
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);  // start the loop
 }
 
 /* ── TasksPreview — compact dashboard widget ──────────────
@@ -106,15 +117,10 @@ const TASK_MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT'
 
 function TasksPreview({ onNavigate }) {
   /* ── state ── */
-  const [tasks,        setTasks]        = useStateApp([]);
-  const [loading,      setLoading]      = useStateApp(true);
-  const [expanded,     setExpanded]     = useStateApp(null);
-  const [newTitle,     setNewTitle]     = useStateApp('');
-  const [newPriority,  setNewPriority]  = useStateApp('medium');
-  const [newDueDate,   setNewDueDate]   = useStateApp('');
-  const [newRecurring, setNewRecurring] = useStateApp(false);
-  const [newInterval,  setNewInterval]  = useStateApp('daily');
-  const [adding,       setAdding]       = useStateApp(false);
+  const [tasks,       setTasks]       = useStateApp([]);
+  const [loading,     setLoading]     = useStateApp(true);
+  const [expanded,    setExpanded]    = useStateApp(null);
+  const [showAddForm, setShowAddForm] = useStateApp(false);
 
   /* ── recurring reset helper ── */
   function isRecurringDue(task) {
@@ -165,10 +171,8 @@ function TasksPreview({ onNavigate }) {
     return () => { cancelled = true; };
   }, []);
 
-  /* ── mark done: confetti + recurring logic ── */
-  const markDone = async (e, id) => {
-    e.stopPropagation();
-    launchConfetti();
+  /* ── mark done: recurring vs one-shot (confetti fires in onClick, NOT here) ── */
+  const markDone = async (id) => {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
     const now = new Date().toISOString();
@@ -184,29 +188,8 @@ function TasksPreview({ onNavigate }) {
     if (db) await db.from('crm_items').update({ status:'closed', last_completed_at:now, updated_at:now }).eq('id', id);
   };
 
-  /* ── add task to Supabase ── */
-  const addTask = async () => {
-    const title = newTitle.trim();
-    if (!title || adding) return;
-    setAdding(true);
-    const db = await (window._supaReady || Promise.resolve(window._supa || null));
-    if (!db) { setAdding(false); return; }
-    const { data, error } = await db.from('crm_items').insert({
-      type:'task', title, status:'open',
-      priority:  newPriority,
-      due_date:  (!newRecurring && newDueDate) ? newDueDate : null,
-      recurring: newRecurring,
-      interval:  newRecurring ? newInterval : null,
-      source:'manual', body:'', tags:[],
-    }).select().single();
-    if (!error && data) setTasks(prev => [...prev, data]);
-    setNewTitle(''); setNewDueDate(''); setNewRecurring(false);
-    setAdding(false);
-  };
-
   /* ── computed ── */
   const visible = sortTasks(tasks.filter(t => t.status === 'open' || isRecurringDue(t)));
-  const typing  = newTitle.trim().length > 0;
 
   return (
     <Card
@@ -214,10 +197,19 @@ function TasksPreview({ onNavigate }) {
       label="tasks"
       meta={loading ? '…' : `${visible.length} open`}
       action={
-        <span onClick={() => onNavigate('crm')} style={{
-          fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em',
-          color: 'var(--accent)', cursor: 'pointer', opacity: 0.85,
-        }}>VIEW ALL →</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span
+            onClick={() => setShowAddForm(true)}
+            title="Add task"
+            style={{ cursor: 'pointer', color: 'var(--accent)', display: 'flex', alignItems: 'center' }}
+          >
+            <Icon name="plus" size={14} />
+          </span>
+          <span onClick={() => onNavigate('crm')} style={{
+            fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em',
+            color: 'var(--accent)', cursor: 'pointer', opacity: 0.85,
+          }}>VIEW ALL →</span>
+        </div>
       }
     >
       {/* ── task list ── */}
@@ -241,9 +233,9 @@ function TasksPreview({ onNavigate }) {
                   borderBottom: (!isLast || isOpen) ? '1px solid var(--border)' : 'none',
                 }}
               >
-                {/* checkbox */}
+                {/* checkbox — triggerConfetti() called DIRECTLY here, synchronously */}
                 <span
-                  onClick={e => markDone(e, task.id)}
+                  onClick={e => { e.stopPropagation(); triggerConfetti(); markDone(task.id); }}
                   title="Mark complete"
                   style={{
                     width: 14, height: 14, borderRadius: 2, flexShrink: 0,
@@ -294,61 +286,233 @@ function TasksPreview({ onNavigate }) {
         })}
       </div>
 
-      {/* ── add task form ── */}
-      <div style={{ borderTop: '1px solid var(--border)', marginTop: visible.length > 0 ? 8 : 0, paddingTop: 10 }}>
-        {/* input + priority + add */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Icon name="plus" size={12} style={{ color: 'var(--fg-4)', flexShrink: 0 }} />
+      {/* ── quick-add hint strip ── */}
+      <div
+        onClick={() => setShowAddForm(true)}
+        style={{
+          borderTop: '1px solid var(--border)',
+          marginTop: visible.length > 0 ? 8 : 0, paddingTop: 10,
+          display: 'flex', alignItems: 'center', gap: 7,
+          cursor: 'pointer', opacity: 0.6,
+          transition: 'opacity 120ms',
+        }}
+        onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+        onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+      >
+        <Icon name="plus" size={12} style={{ color: 'var(--fg-4)' }} />
+        <span style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--fg-4)' }}>
+          add task…
+        </span>
+      </div>
+
+      {/* ── add task modal ── */}
+      {showAddForm && (
+        <AddTaskModal
+          onClose={() => setShowAddForm(false)}
+          onAdded={(newTask) => {
+            if (newTask) setTasks(prev => [...prev, newTask]);
+            setShowAddForm(false);
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+/* ── AddTaskModal ──────────────────────────────────────────
+   Fully self-contained modal for adding tasks to crm_items.
+   No dependency on parent state — props: onClose, onAdded.
+   Writes directly to Supabase and console.logs every response.
+   ─────────────────────────────────────────────────────── */
+function AddTaskModal({ onClose, onAdded }) {
+  const [title,       setTitle]       = useStateApp('');
+  const [priority,    setPriority]    = useStateApp('medium');
+  const [dueDate,     setDueDate]     = useStateApp('');
+  const [recurring,   setRecurring]   = useStateApp(false);
+  const [recInterval, setRecInterval] = useStateApp('daily');
+  const [saving,      setSaving]      = useStateApp(false);
+  const [success,     setSuccess]     = useStateApp(false);
+  const [errMsg,      setErrMsg]      = useStateApp('');
+
+  const submit = async () => {
+    const t = title.trim();
+    if (!t || saving) return;
+    setSaving(true);
+    setErrMsg('');
+    try {
+      const db = await (window._supaReady || Promise.resolve(window._supa || null));
+      if (!db) throw new Error('Supabase not connected — reload and try again');
+
+      const item = {
+        type:      'task',
+        title:     t,
+        status:    'open',
+        priority,
+        due_date:  (!recurring && dueDate) ? dueDate : null,
+        recurring,
+        interval:  recurring ? recInterval : null,
+        source:    'manual',
+        body:      '',
+        tags:      [],
+      };
+
+      console.log('[AddTask] inserting to crm_items:', item);
+      const { data, error } = await db.from('crm_items').insert(item).select().single();
+      console.log('[AddTask] Supabase response → data:', data, '  error:', error);
+
+      if (error) throw new Error(error.message || 'Insert failed');
+
+      setSuccess(true);
+      if (onAdded) onAdded(data);
+      setTimeout(onClose, 1000);
+    } catch (err) {
+      console.error('[AddTask] exception:', err);
+      setErrMsg(err.message);
+      setSaving(false);
+    }
+  };
+
+  const inpSt = {
+    width: '100%', background: 'var(--bg-1)',
+    border: '1px solid var(--border-strong)', borderRadius: 4,
+    padding: '9px 11px', color: 'var(--fg-1)',
+    fontFamily: 'var(--font-sans)', fontSize: 13, outline: 'none',
+    boxSizing: 'border-box', transition: 'border-color 120ms',
+  };
+  const lbl = { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 5, display: 'block' };
+
+  return (
+    /* backdrop — click outside to close */
+    <div
+      onClick={e => e.target === e.currentTarget && onClose()}
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(0,0,0,0.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 8000, padding: 20,
+      }}
+    >
+      <div style={{
+        background: 'var(--bg-2)', border: '1px solid var(--border-strong)',
+        borderRadius: 8, padding: '20px 20px 16px',
+        width: '100%', maxWidth: 420,
+        display: 'flex', flexDirection: 'column', gap: 14,
+        boxShadow: '0 12px 48px rgba(0,0,0,0.6)',
+      }}>
+
+        {/* header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: 15, fontWeight: 600, color: 'var(--fg-1)', letterSpacing: '-0.01em' }}>
+            Add Task
+          </span>
+          <span onClick={onClose} style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'flex' }}>
+            <Icon name="x" size={16} />
+          </span>
+        </div>
+
+        {/* title */}
+        <div>
+          <span style={lbl}>Title *</span>
           <input
-            value={newTitle}
-            onChange={e => setNewTitle(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && addTask()}
-            placeholder="add task · press enter"
-            style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--fg-1)' }}
+            autoFocus
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            placeholder="what needs to be done?"
+            style={inpSt}
           />
-          {/* H / M / L priority chips */}
-          {['high','medium','low'].map(p => (
-            <span key={p} onClick={() => setNewPriority(p)} title={`${p} priority`} style={{
-              width: 18, height: 18, borderRadius: 2, flexShrink: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 8,
-              background: newPriority === p ? TASK_PRIO_COLOR[p] : 'transparent',
-              color:      newPriority === p ? '#001218'           : TASK_PRIO_COLOR[p],
-              border:     `1px solid ${TASK_PRIO_COLOR[p]}`,
-              opacity:    newPriority === p ? 1 : 0.4,
-              transition: 'opacity 120ms, background 120ms',
-            }}>{p[0].toUpperCase()}</span>
-          ))}
-          {typing && (
-            <span onClick={addTask} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0, color: adding ? 'var(--fg-4)' : 'var(--accent)', cursor: 'pointer', letterSpacing: '0.06em' }}>
-              {adding ? '…' : 'ADD'}
-            </span>
+        </div>
+
+        {/* priority */}
+        <div>
+          <span style={lbl}>Priority</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['high','medium','low'].map(p => (
+              <span key={p} onClick={() => setPriority(p)} style={{
+                flex: 1, textAlign: 'center', padding: '7px 0', borderRadius: 4,
+                cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 9,
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+                background: priority === p ? TASK_PRIO_COLOR[p] : 'var(--bg-3)',
+                color:      priority === p ? '#001218'           : TASK_PRIO_COLOR[p],
+                border:     `1px solid ${priority === p ? TASK_PRIO_COLOR[p] : 'var(--border)'}`,
+                transition: 'all 120ms',
+              }}>{p}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* recurring */}
+        <div>
+          <label style={{ display: 'inline-flex', gap: 7, alignItems: 'center', cursor: 'pointer', userSelect: 'none', fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: recurring ? 'var(--accent)' : 'var(--fg-3)' }}>
+            <input type="checkbox" checked={recurring} onChange={e => setRecurring(e.target.checked)} style={{ accentColor: 'var(--accent)', width: 14, height: 14, cursor: 'pointer' }} />
+            Recurring
+          </label>
+          {recurring && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
+              {['daily','weekly','monthly'].map(iv => (
+                <span key={iv} onClick={() => setRecInterval(iv)} style={{
+                  flex: 1, textAlign: 'center', padding: '6px 0', borderRadius: 4,
+                  cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 9,
+                  letterSpacing: '0.08em', textTransform: 'uppercase',
+                  background: recInterval === iv ? 'rgba(0,212,255,0.12)' : 'var(--bg-3)',
+                  color:      recInterval === iv ? 'var(--accent)'         : 'var(--fg-4)',
+                  border:     `1px solid ${recInterval === iv ? 'var(--accent)' : 'var(--border)'}`,
+                  transition: 'all 120ms',
+                }}>{iv}</span>
+              ))}
+            </div>
           )}
         </div>
 
-        {/* recurring toggle + interval + due date (appear while typing) */}
-        {typing && (
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', paddingLeft: 18, marginTop: 6, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.08em', color: newRecurring ? 'var(--accent)' : 'var(--fg-4)', userSelect: 'none' }}>
-              <input type="checkbox" checked={newRecurring} onChange={e => setNewRecurring(e.target.checked)} style={{ accentColor: 'var(--accent)', cursor: 'pointer' }} />
-              RECURRING
-            </label>
-            {newRecurring && ['daily','weekly','monthly'].map(iv => (
-              <span key={iv} onClick={() => setNewInterval(iv)} style={{
-                fontFamily: 'var(--font-mono)', fontSize: 9, cursor: 'pointer',
-                letterSpacing: '0.06em', textTransform: 'uppercase',
-                color:        newInterval === iv ? 'var(--accent)' : 'var(--fg-4)',
-                borderBottom: `1px solid ${newInterval === iv ? 'var(--accent)' : 'transparent'}`,
-                paddingBottom: 1,
-              }}>{iv}</span>
-            ))}
-            {!newRecurring && (
-              <input type="date" value={newDueDate} onChange={e => setNewDueDate(e.target.value)} style={{ marginLeft: 'auto', background: 'transparent', border: 'none', outline: 'none', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)', cursor: 'pointer' }} />
-            )}
+        {/* due date — non-recurring only */}
+        {!recurring && (
+          <div>
+            <span style={lbl}>Due Date (optional)</span>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={e => setDueDate(e.target.value)}
+              style={{ ...inpSt, color: dueDate ? 'var(--fg-1)' : 'var(--fg-4)', cursor: 'pointer' }}
+            />
+          </div>
+        )}
+
+        {/* error */}
+        {errMsg && (
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--neg)', background: 'rgba(255,77,109,0.08)', padding: '7px 10px', borderRadius: 4 }}>
+            {errMsg}
+          </div>
+        )}
+
+        {/* success */}
+        {success && (
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--pos)', background: 'rgba(61,220,151,0.08)', padding: '8px 10px', borderRadius: 4, textAlign: 'center', letterSpacing: '0.06em' }}>
+            ✓ Task added!
+          </div>
+        )}
+
+        {/* actions */}
+        {!success && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', paddingTop: 2 }}>
+            <span onClick={onClose} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)', cursor: 'pointer', padding: '8px 14px', letterSpacing: '0.06em' }}>
+              CANCEL
+            </span>
+            <span
+              onClick={submit}
+              style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.08em',
+                background: (title.trim() && !saving) ? 'var(--accent)' : 'var(--bg-3)',
+                color:      (title.trim() && !saving) ? '#001218'        : 'var(--fg-4)',
+                borderRadius: 4, padding: '8px 20px', cursor: 'pointer',
+                transition: 'all 120ms',
+              }}
+            >
+              {saving ? 'SAVING…' : 'ADD TASK'}
+            </span>
           </div>
         )}
       </div>
-    </Card>
+    </div>
   );
 }
 

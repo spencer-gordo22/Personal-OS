@@ -423,7 +423,10 @@ def _whoop_do_refresh() -> str:
     if not cid or not sec:
         raise ValueError('WHOOP client credentials not configured')
 
-    print(f'[whoop refresh] requesting new tokens  refresh={refresh_token[:12]}…')
+    print(f'[whoop refresh] POST {WHOOP_TOKEN_URL}')
+    print(f'[whoop refresh] payload: grant_type=refresh_token  '
+          f'client_id={cid[:8]}…  client_secret={sec[:4]}…  '
+          f'refresh_token={refresh_token[:12]}…')
     post_data = urllib.parse.urlencode({
         'grant_type':    'refresh_token',
         'refresh_token': refresh_token,
@@ -438,7 +441,10 @@ def _whoop_do_refresh() -> str:
             tok = json.loads(r.read().decode())
     except urllib.request.HTTPError as e:
         body = e.read().decode()
-        print(f'[whoop refresh] HTTP {e.code}: {body[:300]}')
+        print(f'[whoop refresh] FAILED HTTP {e.code}: {body[:500]}')
+        print(f'[whoop refresh] Request details: POST {WHOOP_TOKEN_URL} '
+              f'grant_type=refresh_token client_id={cid[:8]}... '
+              f'refresh_token={refresh_token[:12]}...')
         if e.code == 401:
             # Refresh token revoked — clear everything so UI shows reconnect button
             for k in ('whoop_access_token', 'whoop_refresh_token',
@@ -455,10 +461,15 @@ def _whoop_do_refresh() -> str:
     return tok['access_token']
 
 
-def _whoop_get_valid_token() -> 'str | None':
+def get_valid_whoop_token() -> 'str | None':
     """
-    Return a valid WHOOP access token, refreshing proactively if the token
-    expires within 60 seconds. Returns None if not connected.
+    Return a valid WHOOP access token.
+
+    • Reads access_token, refresh_token, expiry from Supabase.
+    • If the token expires within 10 minutes (600 s) → proactively refreshes.
+    • On backward-compat migration from the legacy full-dict key, saves flat keys.
+    • Returns None if no tokens are stored at all.
+    • Raises ValueError if a required refresh fails.
     """
     access_token  = _supa_kv_get('whoop_access_token')  or ''
     refresh_token = _supa_kv_get('whoop_refresh_token') or ''
@@ -474,24 +485,56 @@ def _whoop_get_valid_token() -> 'str | None':
             fa_s          = fa_ms / 1000 if fa_ms > 1e10 else fa_ms
             expires_at    = int(fa_s + old.get('expires_in', 0))
             if access_token:
-                print('[whoop token] migrating from legacy sos_whoop_token key')
+                print('[whoop token] migrating from legacy sos_whoop_token → flat keys')
                 _supa_kv_set('whoop_access_token',  access_token)
                 _supa_kv_set('whoop_refresh_token', refresh_token)
                 _supa_kv_set('whoop_token_expiry',  expires_at)
 
     if not access_token and not refresh_token:
-        print('[whoop token] no tokens stored')
+        print('[whoop token] no tokens stored — WHOOP not connected')
         return None
 
     now = int(time.time())
-    ttl = expires_at - now if expires_at else None
-    print(f'[whoop token] access={access_token[:12]}…  ttl={ttl}s')
+    ttl = (expires_at - now) if expires_at else None
+    print(f'[whoop token] access={access_token[:12]}…  ttl={ttl}s  '
+          f'(refresh threshold=600s)')
 
-    if ttl is not None and ttl < 60:
-        print(f'[whoop token] expires in {ttl}s — refreshing proactively')
-        access_token = _whoop_do_refresh()  # raises on failure
+    # Proactively refresh if within 10 minutes of expiry
+    if ttl is not None and ttl < 600:
+        print(f'[whoop token] TTL {ttl}s < 600s — proactive refresh')
+        access_token = _whoop_do_refresh()  # raises ValueError on failure
 
     return access_token or None
+
+
+# ── backward-compat alias kept so callers that used the old name still work ──
+_whoop_get_valid_token = get_valid_whoop_token
+
+
+def _start_whoop_token_refresher() -> None:
+    """
+    Background thread: proactively call get_valid_whoop_token() every 40 minutes
+    so the token is always fresh and the 10-minute expiry window never triggers
+    during an actual user request.
+    """
+    def _loop():
+        # Wait 5 minutes before the first refresh so startup finishes cleanly
+        time.sleep(300)
+        while True:
+            print('[whoop refresher] proactive background refresh…')
+            try:
+                tok = get_valid_whoop_token()
+                if tok:
+                    print(f'[whoop refresher] OK — token={tok[:12]}…')
+                else:
+                    print('[whoop refresher] no token stored, skipping')
+            except Exception as exc:
+                print(f'[whoop refresher] FAILED: {exc}')
+            time.sleep(40 * 60)   # 40 minutes
+
+    t = threading.Thread(target=_loop, daemon=True, name='whoop-token-refresher')
+    t.start()
+    print('[whoop refresher] background thread started (fires every 40 min)')
 
 
 # ── WHOOP endpoint URL map ────────────────────────────────────────────────────
@@ -536,31 +579,119 @@ UA = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stooq stock quote fetch
+# Stock quote fetch — yfinance primary → Yahoo Finance v8 fallback → cache
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _stooq_fetch(sym: str) -> dict:
-    for suffix in (f'{sym}.US', sym):
-        url = f'https://stooq.com/q/l/?s={suffix}&f=sd2t2ohlcvp&h&e=csv'
-        req = urllib.request.Request(url, headers={'User-Agent': UA, 'Accept': 'text/csv, */*'})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            text = r.read().decode('utf-8').strip()
-        lines = text.splitlines()
-        if len(lines) < 2:
-            continue
-        parts = lines[-1].split(',')
-        if len(parts) < 9 or parts[6] in ('N/D', '', 'Close'):
-            continue
-        try:
-            close = float(parts[6])
-            prev  = float(parts[8]) if parts[8] not in ('N/D', '') else close
-        except ValueError:
-            continue
-        day_change = round(close - prev, 4)
-        day_pct    = round((close - prev) / prev * 100, 4) if prev else 0.0
-        return {'price': close, 'dayChange': day_change, 'dayPct': day_pct,
-                'prevClose': prev, 'mktState': 'REGULAR', 'longName': sym}
-    raise ValueError(f'No data for {sym!r} on Stooq')
+try:
+    import yfinance as yf
+    _YF_AVAILABLE = True
+except ImportError:
+    _YF_AVAILABLE = False
+    print('[quotes] yfinance not installed; using Yahoo v8 only')
+
+_QUOTE_CACHE:      dict            = {}   # sym → last-good quote dict
+_QUOTE_CACHE_LOCK: threading.Lock  = threading.Lock()
+
+_YAHOO_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+             'AppleWebKit/537.36 (KHTML, like Gecko) '
+             'Chrome/124.0.0.0 Safari/537.36')
+
+
+def _yf_fetch(sym: str) -> dict:
+    """Fetch via yfinance (uses Yahoo Finance internally)."""
+    if not _YF_AVAILABLE:
+        raise ValueError('yfinance not available')
+    print(f'[quotes] yfinance → {sym}')
+    ticker = yf.Ticker(sym)
+    fi     = ticker.fast_info
+
+    price      = getattr(fi, 'last_price',           None)
+    prev_close = getattr(fi, 'previous_close',       None)
+    if price is None:
+        price  = getattr(fi, 'regularMarketPrice',   None)
+    if prev_close is None:
+        prev_close = getattr(fi, 'regularMarketPreviousClose', None)
+
+    if price is None:
+        raise ValueError(f'yfinance: null price for {sym}')
+
+    prev_close  = prev_close or price
+    day_change  = round(price - prev_close, 4)
+    day_pct     = round((price - prev_close) / prev_close * 100, 4) if prev_close else 0.0
+    print(f'[quotes] yfinance OK: {sym} = ${price:.4f}  day%={day_pct:+.2f}')
+    return {'price': price, 'dayChange': day_change, 'dayPct': day_pct,
+            'prevClose': prev_close, 'mktState': 'REGULAR', 'longName': sym}
+
+
+def _yahoo_v8_fetch(sym: str) -> dict:
+    """Fetch via Yahoo Finance chart API (no Python lib dependency)."""
+    print(f'[quotes] Yahoo v8 → {sym}')
+    url = f'https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1d&range=2d'
+    req = urllib.request.Request(url, headers={
+        'User-Agent':      _YAHOO_UA,
+        'Accept':          'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control':   'no-cache',
+    })
+    with urllib.request.urlopen(req, timeout=12) as r:
+        data = json.loads(r.read().decode())
+
+    results = (data.get('chart') or {}).get('result') or []
+    if not results:
+        err = (data.get('chart') or {}).get('error', {})
+        raise ValueError(f'Yahoo v8 no result for {sym}: {err}')
+
+    meta       = results[0]['meta']
+    price      = (meta.get('regularMarketPrice') or
+                  meta.get('price'))
+    prev_close = (meta.get('previousClose') or
+                  meta.get('chartPreviousClose') or
+                  meta.get('regularMarketPreviousClose'))
+
+    if not price:
+        raise ValueError(f'Yahoo v8: null price for {sym}')
+
+    prev_close = prev_close or price
+    day_change = round(price - prev_close, 4)
+    day_pct    = round((price - prev_close) / prev_close * 100, 4) if prev_close else 0.0
+    print(f'[quotes] Yahoo v8 OK: {sym} = ${price:.4f}  day%={day_pct:+.2f}')
+    return {'price': price, 'dayChange': day_change, 'dayPct': day_pct,
+            'prevClose': prev_close, 'mktState': 'REGULAR',
+            'longName': meta.get('shortName', sym)}
+
+
+def _fetch_quote(sym: str) -> dict:
+    """
+    yfinance → Yahoo v8 → in-memory cache.
+    Always returns a dict; raises only if all three fail.
+    Updates the cache on every successful fetch.
+    """
+    # 1. yfinance
+    try:
+        result = _yf_fetch(sym)
+        with _QUOTE_CACHE_LOCK:
+            _QUOTE_CACHE[sym] = result
+        return result
+    except Exception as e:
+        print(f'[quotes] yfinance FAIL {sym}: {e}')
+
+    # 2. Yahoo Finance v8
+    try:
+        result = _yahoo_v8_fetch(sym)
+        with _QUOTE_CACHE_LOCK:
+            _QUOTE_CACHE[sym] = result
+        return result
+    except Exception as e:
+        print(f'[quotes] Yahoo v8 FAIL {sym}: {e}')
+
+    # 3. In-memory cache (stale)
+    with _QUOTE_CACHE_LOCK:
+        cached = _QUOTE_CACHE.get(sym)
+    if cached:
+        print(f'[quotes] CACHE hit {sym}: ${cached["price"]:.4f} (stale)')
+        return {**cached, 'stale': True}
+
+    raise ValueError(f'All sources failed for {sym} and no cache available')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -929,12 +1060,12 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
         quotes, errors = {}, {}
         with ThreadPoolExecutor(max_workers=min(len(symbols), 8)) as pool:
-            fm = {pool.submit(_stooq_fetch, s): s for s in symbols}
+            fm = {pool.submit(_fetch_quote, s): s for s in symbols}
             for fut in as_completed(fm):
                 sym = fm[fut]
                 try:    quotes[sym] = fut.result()
                 except Exception as exc:
-                    errors[sym] = str(exc); print(f'[quotes] {sym}: {exc}')
+                    errors[sym] = str(exc); print(f'[quotes] FINAL FAIL {sym}: {exc}')
 
         ok   = bool(quotes)
         body = json.dumps({'ok': ok, 'quotes': quotes, 'errors': errors}).encode()
@@ -1774,4 +1905,6 @@ if __name__ == '__main__':
         _start_daily_push_scheduler()
     else:
         print(f'Push        →  VAPID keys not set — push notifications disabled')
+    # Start proactive WHOOP token refresher (every 40 min)
+    _start_whoop_token_refresher()
     ThreadingHTTPServer(('', PORT), NoCacheHandler).serve_forever()
