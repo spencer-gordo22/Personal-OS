@@ -9,6 +9,7 @@ const INITIAL_HEALTH = {
   hrv:        0,
   sleep:      0,
   sleep_perf: 0,   // sleep performance % from WHOOP
+  strain:     0,   // day strain from WHOOP cycle
   steps:      0,
   weight:     0,   // stored in lbs
   vo2:        0,
@@ -63,38 +64,67 @@ function HealthPulse() {
   const [whoopStatus,  setWhoopStatus]  = useStateHP('idle');  // idle | syncing | live | error
   const [whoopError,   setWhoopError]   = useStateHP('');
   const [lastSync,     setLastSync]     = useStateHP('');
+  const [needsReconnect, setNeedsReconnect] = useStateHP(false); // scope/sleep banner
 
   /* ── manual-field inline editing (weight + vo2) ── */
   const [inlineEdit,  setInlineEdit]  = useStateHP(null);   // 'weight' | 'vo2' | null
   const [inlineDraft, setInlineDraft] = useStateHP('');
 
-  /* ── auto-sync once on mount if token present ── */
+  /* ── auto-sync once on mount ──
+     Always attempt — the server holds the token in Supabase, so we no longer
+     gate on localStorage. A 401 just leaves persisted data untouched. */
   useEffectHP(() => {
-    if (whoopToken && whoopToken.access_token) {
-      syncWhoop();
-    }
+    syncWhoop();
   }, []);
 
-  /* syncWhoop — pulls recovery score, HRV, resting HR, sleep, sleep performance
-     from WHOOP v2 API. Weight and VO2 are manual fields; never touched here. */
+  /* syncWhoop — pulls recovery, HRV, resting HR, sleep, sleep performance, and
+     day strain from the WHOOP v2 API. Weight and VO2 are manual fields.
+
+     Note: WHOOP v2 sleep nests the duration under score.stage_summary, so the
+     in-bed time is score.stage_summary.total_in_bed_time_milli (NOT score.*). */
   async function syncWhoop() {
     setWhoopStatus('syncing');
     setWhoopError('');
     try {
-      const [recRes, sleepRes] = await Promise.all([
+      const [recRes, sleepRes, cycleRes] = await Promise.all([
         fetch('/whoop/data?endpoint=recovery'),
         fetch('/whoop/data?endpoint=activity/sleep'),
-      ]);
-      if (!recRes.ok || !sleepRes.ok) {
-        throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}`);
-      }
-      const [recJson, sleepJson] = await Promise.all([
-        recRes.json(),
-        sleepRes.json(),
+        fetch('/whoop/data?endpoint=cycle'),
       ]);
 
-      const rec      = recJson.records?.[0];
-      const sleepRec = sleepJson.records?.[0]?.score;
+      // If every endpoint failed, treat as a hard error (keeps cached data).
+      if (!recRes.ok && !sleepRes.ok && !cycleRes.ok) {
+        throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}/${cycleRes.status}`);
+      }
+
+      const recJson   = recRes.ok   ? await recRes.json()   : null;
+      const sleepJson = sleepRes.ok ? await sleepRes.json() : null;
+      const cycleJson = cycleRes.ok ? await cycleRes.json() : null;
+
+      console.log('[WHOOP] recovery:', JSON.stringify(recJson).slice(0, 400));
+      console.log('[WHOOP] sleep:',    JSON.stringify(sleepJson).slice(0, 700));
+      console.log('[WHOOP] cycle:',    JSON.stringify(cycleJson).slice(0, 400));
+
+      const rec        = recJson?.records?.[0];
+      const sleepScore = sleepJson?.records?.[0]?.score;
+      const cycleScore = cycleJson?.records?.[0]?.score;
+
+      /* sleep hours — stage_summary nesting first, fall back to flat */
+      const inBedMilli =
+        sleepScore?.stage_summary?.total_in_bed_time_milli ??
+        sleepScore?.total_in_bed_time_milli ?? null;
+      const sleepHours = inBedMilli != null
+        ? parseFloat((inBedMilli / 3600000).toFixed(1)) : null;
+      const sleepPerf = sleepScore?.sleep_performance_percentage != null
+        ? Math.round(sleepScore.sleep_performance_percentage) : null;
+      const strain = cycleScore?.strain != null
+        ? parseFloat(Number(cycleScore.strain).toFixed(1)) : null;
+
+      /* reconnect banner: connection works (recovery present) but sleep empty
+         → almost always a missing read:sleep scope, so prompt a reconnect. */
+      const gotRecovery = rec?.score?.recovery_score != null;
+      const sleepEmpty  = sleepHours == null || sleepHours === 0;
+      setNeedsReconnect(gotRecovery && sleepEmpty);
 
       setHealth(h => ({
         ...h,
@@ -102,12 +132,9 @@ function HealthPulse() {
         hrv:        rec?.score?.hrv_rmssd_milli != null
                       ? Math.round(rec.score.hrv_rmssd_milli) : h.hrv,
         hr:         rec?.score?.resting_heart_rate ?? h.hr,
-        sleep:      sleepRec?.total_in_bed_time_milli != null
-                      ? parseFloat((sleepRec.total_in_bed_time_milli / 3600000).toFixed(1))
-                      : h.sleep,
-        sleep_perf: sleepRec?.sleep_performance_percentage != null
-                      ? Math.round(sleepRec.sleep_performance_percentage)
-                      : h.sleep_perf,
+        sleep:      sleepHours ?? h.sleep,
+        sleep_perf: sleepPerf  ?? h.sleep_perf,
+        strain:     strain     ?? h.strain,
         // weight and vo2 intentionally omitted — manual fields
       }));
 
@@ -198,6 +225,23 @@ function HealthPulse() {
         </span>
       }>
 
+      {/* ── Reconnect banner — shown when recovery syncs but sleep is empty ── */}
+      {needsReconnect && (
+        <div
+          onClick={connectWhoop}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: 'rgba(255,178,0,0.10)', border: '1px solid var(--warn)',
+            borderRadius: 4, padding: '7px 10px', marginBottom: 12, cursor: 'pointer',
+          }}
+        >
+          <Icon name="alert-triangle" size={12} style={{ color: 'var(--warn)', flexShrink: 0 }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--warn)', letterSpacing: '0.04em', lineHeight: 1.4 }}>
+            Reconnect Whoop for full data access →
+          </span>
+        </div>
+      )}
+
       {isMobile ? (
 
         /* ══════════════════════════════════════════════════════
@@ -287,6 +331,10 @@ function HealthPulse() {
                 <input value={drafts.sleep_perf} onChange={upd('sleep_perf')} onKeyDown={onKey} style={inp(true)} />}
             />
 
+            <Mini label="day strain"
+              value={h.strain > 0 ? `${h.strain}` : '—'}
+            />
+
             <Mini label="steps"
               value={h.steps > 0 ? h.steps.toLocaleString() : '—'}
               editNode={editMode && drafts &&
@@ -344,10 +392,10 @@ function HealthPulse() {
 
           </div>
 
-          {/* ── bottom 5 mini metrics ── */}
+          {/* ── bottom mini metrics ── */}
           <div style={{
             marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)',
-            display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 8,
+            display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 8,
           }}>
 
             <Mini label="steps" value={h.steps.toLocaleString()}
@@ -379,6 +427,10 @@ function HealthPulse() {
               color={isConnected ? whoopColor('sleep_perf', h.sleep_perf) : undefined}
               editNode={editMode &&
                 <input value={drafts.sleep_perf} onChange={upd('sleep_perf')} onKeyDown={onKey} style={inp(true)} />}
+            />
+
+            <Mini label="day strain"
+              value={h.strain > 0 ? `${h.strain}` : '—'}
             />
 
           </div>

@@ -866,22 +866,15 @@ def _sanitise_crm_item(item: dict) -> dict:
     return out
 
 
-def _supa_insert_crm(item: dict) -> tuple:
-    """
-    Insert a CRM item.  Returns (ok: bool, error_msg: str).
-    error_msg is '' on success.
-    """
-    if not SUPA_URL or not SUPA_KEY:
-        msg = 'SUPA_URL or SUPA_KEY not configured'
-        print(f'[supa crm] {msg}')
-        return False, msg
+# Optional recurring columns — stripped automatically if they don't exist yet
+# in the crm_items table (graceful degradation before the ALTER TABLE migration).
+_CRM_RECURRING_FIELDS = ('recurring', 'interval', 'last_completed_at')
 
-    clean = _sanitise_crm_item(item)
-    body  = json.dumps(clean).encode()
 
-    print(f'[supa crm] INSERT → {json.dumps(clean, ensure_ascii=False)[:400]}')
-
-    req = urllib.request.Request(
+def _supa_crm_post(clean: dict) -> tuple:
+    """Low-level POST of a sanitised row. Returns (ok, http_status, raw_body)."""
+    body = json.dumps(clean).encode()
+    req  = urllib.request.Request(
         f'{SUPA_URL}/rest/v1/crm_items', data=body, method='POST',
         headers={
             'apikey':        SUPA_KEY,
@@ -891,31 +884,91 @@ def _supa_insert_crm(item: dict) -> tuple:
         })
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
-            http_status = r.status
-            resp_body   = r.read().decode()[:200]
-        print(f'[supa crm] response HTTP {http_status}  body={resp_body!r}')
-        # PostgREST INSERT with return=minimal → 201 Created (empty body)
-        # Some PostgREST versions may return 204 No Content
-        if http_status in (200, 201, 204):
-            return True, ''
-        msg = f'Unexpected HTTP {http_status}: {resp_body}'
-        print(f'[supa crm] unexpected success status: {msg}')
-        return False, msg
-
+            return (r.status in (200, 201, 204), r.status, r.read().decode()[:300])
     except urllib.request.HTTPError as e:
         raw = ''
-        try:
-            raw = e.read().decode()[:600]
-        except Exception:
-            pass
-        msg = f'HTTP {e.code}: {raw}'
-        print(f'[supa crm] HTTP error: {msg}')
+        try: raw = e.read().decode()[:600]
+        except Exception: pass
+        return (False, e.code, raw)
+    except Exception as e:
+        return (False, 0, str(e))
+
+
+def _supa_insert_crm(item: dict) -> tuple:
+    """
+    Insert a CRM item.  Returns (ok: bool, error_msg: str).
+
+    Resilient to the recurring-task columns not yet existing: if PostgREST
+    rejects the row because a column is missing from its schema cache
+    (PGRST204 / "could not find the X column"), we retry once with the
+    recurring fields stripped so basic task creation always succeeds.
+    """
+    if not SUPA_URL or not SUPA_KEY:
+        msg = 'SUPA_URL or SUPA_KEY not configured'
+        print(f'[supa crm] {msg}')
         return False, msg
 
-    except Exception as e:
-        msg = str(e)
-        print(f'[supa crm] exception: {msg}')
+    clean = _sanitise_crm_item(item)
+    print(f'[supa crm] INSERT → {json.dumps(clean, ensure_ascii=False)[:400]}')
+
+    ok, status, raw = _supa_crm_post(clean)
+    if ok:
+        print(f'[supa crm] response HTTP {status} ✓')
+        return True, ''
+
+    # Detect a missing-column / schema-cache error and retry without recurring cols
+    low = (raw or '').lower()
+    missing_col = (
+        'pgrst204' in low or
+        'schema cache' in low or
+        ('could not find' in low and 'column' in low) or
+        ('column' in low and 'does not exist' in low)
+    )
+    if missing_col and any(k in clean for k in _CRM_RECURRING_FIELDS):
+        print(f'[supa crm] HTTP {status}: missing recurring column(s). '
+              f'Retrying without {_CRM_RECURRING_FIELDS}. raw={raw[:200]}')
+        reduced = {k: v for k, v in clean.items() if k not in _CRM_RECURRING_FIELDS}
+        ok2, status2, raw2 = _supa_crm_post(reduced)
+        if ok2:
+            print(f'[supa crm] retry HTTP {status2} ✓ (recurring cols not yet migrated)')
+            return True, ''
+        msg = f'HTTP {status2}: {raw2}'
+        print(f'[supa crm] retry failed: {msg}')
         return False, msg
+
+    msg = f'HTTP {status}: {raw}'
+    print(f'[supa crm] HTTP error: {msg}')
+    return False, msg
+
+
+def _check_crm_columns() -> None:
+    """
+    Startup probe: verify the recurring-task columns exist in crm_items.
+    PostgREST/anon key cannot run DDL, so if they're missing we log the exact
+    SQL to run in the Supabase SQL editor. Inserts degrade gracefully meanwhile.
+    """
+    if not SUPA_URL or not SUPA_KEY:
+        return
+    url = f'{SUPA_URL}/rest/v1/crm_items?select=recurring,interval,last_completed_at&limit=1'
+    req = urllib.request.Request(url, headers={
+        'apikey': SUPA_KEY, 'Authorization': f'Bearer {SUPA_KEY}', 'Accept': 'application/json',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+        print('[crm schema] ✓ recurring / interval / last_completed_at columns present')
+    except urllib.request.HTTPError as e:
+        raw = ''
+        try: raw = e.read().decode()[:300]
+        except Exception: pass
+        print('[crm schema] ⚠️  recurring columns MISSING — recurring tasks will '
+              'silently degrade until you run this SQL in the Supabase SQL editor:')
+        print('[crm schema]   ALTER TABLE crm_items ADD COLUMN IF NOT EXISTS recurring boolean DEFAULT false;')
+        print('[crm schema]   ALTER TABLE crm_items ADD COLUMN IF NOT EXISTS "interval" text DEFAULT null;')
+        print('[crm schema]   ALTER TABLE crm_items ADD COLUMN IF NOT EXISTS last_completed_at timestamptz DEFAULT null;')
+        print(f'[crm schema]   (probe HTTP {e.code}: {raw})')
+    except Exception as e:
+        print(f'[crm schema] probe error (non-fatal): {e}')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1905,6 +1958,8 @@ if __name__ == '__main__':
         _start_daily_push_scheduler()
     else:
         print(f'Push        →  VAPID keys not set — push notifications disabled')
+    # Verify crm_items has the recurring-task columns (logs SQL if missing)
+    _check_crm_columns()
     # Start proactive WHOOP token refresher (every 40 min)
     _start_whoop_token_refresher()
     ThreadingHTTPServer(('', PORT), NoCacheHandler).serve_forever()

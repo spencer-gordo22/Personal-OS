@@ -105,6 +105,10 @@ function triggerConfetti() {
   requestAnimationFrame(frame);  // start the loop
 }
 
+/* Expose globally so it can be tested standalone from the browser console:
+   just type  triggerConfetti()  to verify the animation in isolation. */
+if (typeof window !== 'undefined') window.triggerConfetti = triggerConfetti;
+
 /* ── TasksPreview — compact dashboard widget ──────────────
    Shows the 3 most urgent open tasks from crm_items.
    Priority sort: high → medium → low, then earliest due date.
@@ -343,7 +347,8 @@ function AddTaskModal({ onClose, onAdded }) {
       const db = await (window._supaReady || Promise.resolve(window._supa || null));
       if (!db) throw new Error('Supabase not connected — reload and try again');
 
-      const item = {
+      // Full payload including recurring columns
+      const fullItem = {
         type:      'task',
         title:     t,
         status:    'open',
@@ -356,9 +361,21 @@ function AddTaskModal({ onClose, onAdded }) {
         tags:      [],
       };
 
-      console.log('[AddTask] inserting to crm_items:', item);
-      const { data, error } = await db.from('crm_items').insert(item).select().single();
+      console.log('[AddTask] inserting to crm_items:', fullItem);
+      let { data, error } = await db.from('crm_items').insert(fullItem).select().single();
       console.log('[AddTask] Supabase response → data:', data, '  error:', error);
+
+      // Graceful degradation: if the recurring columns aren't migrated yet,
+      // PostgREST returns PGRST204 ("could not find the 'interval' column …").
+      // Retry once without the recurring fields so task creation never fails.
+      if (error && /column|schema cache|PGRST204/i.test(error.message || error.code || '')) {
+        console.warn('[AddTask] recurring columns missing — retrying without them');
+        const { recurring: _r, interval: _i, ...reduced } = fullItem;
+        const retry = await db.from('crm_items').insert(reduced).select().single();
+        console.log('[AddTask] retry response → data:', retry.data, '  error:', retry.error);
+        data  = retry.data;
+        error = retry.error;
+      }
 
       if (error) throw new Error(error.message || 'Insert failed');
 
