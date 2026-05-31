@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon */
+/* global React, Sidebar, TopBar, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -542,8 +542,8 @@ function DashboardGrid({ isMobile, onNavigate }) {
       gap: 12,
       gridAutoRows: 'minmax(min-content, auto)',
     }}>
-      {/* row 1: finance + health — unchanged */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Cash /></div>
+      {/* row 1: SAT Prep tracker (top-left, where Chase Checking used to be) + finance + health */}
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><SAT /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Investments /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 3' }}><HealthPulse /></div>
 
@@ -561,9 +561,6 @@ function DashboardGrid({ isMobile, onNavigate }) {
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Calendar /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Journal /></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Goals /></div>
-
-      {/* row 4 */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><SAT /></div>
     </div>
   );
 }
@@ -590,8 +587,7 @@ function ModuleView({ id, isMobile }) {
   const cols = isMobile ? '1fr' : 'repeat(12,1fr)';
   if (id === 'finance') return (
     <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 12 }}>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Cash /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 7' }}><Investments /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 12' }}><Investments /></div>
     </div>
   );
   if (id === 'health') return (
@@ -605,7 +601,7 @@ function ModuleView({ id, isMobile }) {
   if (id === 'journal')   return <div style={{ maxWidth: isMobile ? '100%' : 680 }}><Journal /></div>;
   if (id === 'goals')     return <div style={{ maxWidth: isMobile ? '100%' : 560 }}><Goals /></div>;
   if (id === 'calendar')  return <div style={{ maxWidth: isMobile ? '100%' : 560 }}><Calendar /></div>;
-  if (id === 'sat')       return <div style={{ maxWidth: isMobile ? '100%' : 480 }}><SAT /></div>;
+  if (id === 'sat')       return <div style={{ maxWidth: isMobile ? '100%' : 720 }}><SAT /></div>;
   if (id === 'settings')  return <Settings />;
   return null;
 }
