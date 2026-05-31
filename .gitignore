@@ -26,3 +26,4 @@ nohup.out
 node_modules/
 dist/
 .npm/
+.env
