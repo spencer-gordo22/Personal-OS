@@ -381,6 +381,19 @@ _WHOOP_TOKEN_KEYS = (
     'whoop_token_expiry', 'sos_whoop_token',
 )
 
+# In-memory record of the most recent refresh attempt (for /whoop/token-status).
+# Reset on process restart — purely a debugging aid.
+_WHOOP_LAST_REFRESH = {'at': None, 'ok': None, 'detail': ''}
+
+
+def _whoop_log_valid(expires_at: int) -> None:
+    """Log a human-readable 'valid until' line every time a token is confirmed good."""
+    try:
+        when = datetime.datetime.utcfromtimestamp(int(expires_at)).strftime('%Y-%m-%d %H:%M:%S UTC')
+    except Exception:
+        when = str(expires_at)
+    print(f'[whoop token] ✓ WHOOP token valid until {when}  (expires_at={expires_at})')
+
 
 def _whoop_creds() -> 'tuple[str,str]':
     """Return (client_id, client_secret) from env vars → Supabase fallback."""
@@ -464,7 +477,7 @@ def get_valid_whoop_token(force_refresh: bool = False) -> 'str | None':
 
     # ── fast path: token still good ──
     if access and not force_refresh and (expires_at - now) > 300:
-        print(f'[whoop token] valid (ttl={expires_at - now}s) — returning stored token')
+        _whoop_log_valid(expires_at)
         return access
 
     # ── need a refresh ──
@@ -472,11 +485,24 @@ def get_valid_whoop_token(force_refresh: bool = False) -> 'str | None':
         print('[whoop token] no refresh_token — clearing, reconnect required')
         _whoop_clear_tokens()
         return None
-    cid, sec = _whoop_creds()
-    if not cid or not sec:
-        print('[whoop token] WHOOP client credentials not configured — cannot refresh')
-        return None
 
+    # ── Credentials: WHOOP env vars are the source of truth (NEVER Google) ──
+    cid = os.environ.get('WHOOP_CLIENT_ID', '').strip()
+    sec = os.environ.get('WHOOP_CLIENT_SECRET', '').strip()
+    if not cid or not sec:
+        missing = [n for n, v in (('WHOOP_CLIENT_ID', cid), ('WHOOP_CLIENT_SECRET', sec)) if not v]
+        print(f'[whoop refresh] ERROR: missing env var(s): {", ".join(missing)} — '
+              f'set with `flyctl secrets set {missing[0]}=…`. Trying Supabase-stored creds…')
+        s_cid, s_sec = _whoop_creds()
+        cid = cid or s_cid
+        sec = sec or s_sec
+        if not cid or not sec:
+            _WHOOP_LAST_REFRESH.update({'at': now, 'ok': False,
+                'detail': f'missing credentials: {", ".join(missing)}'})
+            print('[whoop refresh] ERROR: no WHOOP client credentials anywhere — cannot refresh')
+            return None
+
+    _WHOOP_LAST_REFRESH.update({'at': now, 'ok': None, 'detail': 'in progress'})
     form = {
         'grant_type':    'refresh_token',
         'refresh_token': refresh,
@@ -486,6 +512,9 @@ def get_valid_whoop_token(force_refresh: bool = False) -> 'str | None':
     post_data = urllib.parse.urlencode(form).encode()
     print(f'[whoop refresh] → POST {WHOOP_TOKEN_URL}')
     print(f'[whoop refresh]   Content-Type: application/x-www-form-urlencoded')
+    print(f'[whoop refresh]   creds source: env vars present '
+          f'(WHOOP_CLIENT_ID={bool(os.environ.get("WHOOP_CLIENT_ID", "").strip())}, '
+          f'WHOOP_CLIENT_SECRET={bool(os.environ.get("WHOOP_CLIENT_SECRET", "").strip())})')
     print(f'[whoop refresh]   body: grant_type=refresh_token'
           f'&refresh_token={refresh[:12]}…&client_id={cid[:8]}…&client_secret={sec[:4]}…')
     req = urllib.request.Request(
@@ -501,6 +530,7 @@ def get_valid_whoop_token(force_refresh: bool = False) -> 'str | None':
         try: err = e.read().decode()
         except Exception: pass
         print(f'[whoop refresh] ← HTTP {e.code}  response: {err[:600]}')
+        _WHOOP_LAST_REFRESH.update({'at': now, 'ok': False, 'detail': f'HTTP {e.code}: {err[:160]}'})
         if 400 <= e.code < 500:
             # refresh token is genuinely dead → force reconnect
             _whoop_clear_tokens()
@@ -510,9 +540,15 @@ def get_valid_whoop_token(force_refresh: bool = False) -> 'str | None':
     except Exception as e:
         # network/timeout — keep tokens, just fail this attempt
         print(f'[whoop refresh] ← transient error: {e} — keeping tokens')
+        _WHOOP_LAST_REFRESH.update({'at': now, 'ok': False, 'detail': f'transient: {e}'})
         return None
 
-    return _whoop_save_token_response(tok)
+    new_access = _whoop_save_token_response(tok)
+    new_expires = _supa_kv_get('whoop_token_expires_at') or 0
+    _WHOOP_LAST_REFRESH.update({'at': now, 'ok': True, 'detail': 'refreshed OK'})
+    if new_access:
+        _whoop_log_valid(new_expires)
+    return new_access
 
 
 # ── backward-compat alias kept so older callers still resolve ──
@@ -1075,6 +1111,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/whoop/auth'):            self._whoop_auth()
         elif p.startswith('/whoop/callback'):        self._whoop_callback()
         elif p.startswith('/whoop/data'):            self._whoop_data()
+        elif p.startswith('/whoop/token-status'):    self._whoop_token_status()
         elif p.startswith('/whoop/status'):          self._whoop_status()
         elif p.startswith('/whoop/refresh'):         self._whoop_refresh_endpoint()
         elif p.startswith('/whoop/debug'):           self._whoop_debug()
@@ -1361,6 +1398,45 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _whoop_token_status(self):
+        """
+        GET /whoop/token-status — full debug snapshot WITHOUT triggering a refresh
+        or requiring a reconnect. Shows token presence, expiry, last refresh
+        attempt, and whether the WHOOP_CLIENT_ID / WHOOP_CLIENT_SECRET env vars
+        are present (booleans only — never the values).
+        """
+        access     = _supa_kv_get('whoop_access_token')  or ''
+        refresh    = _supa_kv_get('whoop_refresh_token') or ''
+        expires_at = _supa_kv_get('whoop_token_expires_at')
+        if expires_at is None:
+            expires_at = _supa_kv_get('whoop_token_expiry') or 0
+        expires_at = int(expires_at or 0)
+        now = int(time.time())
+
+        def _utc(ts):
+            if not ts:
+                return None
+            try:
+                return datetime.datetime.utcfromtimestamp(int(ts)).strftime('%Y-%m-%d %H:%M:%S UTC')
+            except Exception:
+                return str(ts)
+
+        last = _WHOOP_LAST_REFRESH
+        self._json({
+            'tokens_exist':                    bool(access),
+            'has_refresh_token':               bool(refresh),
+            'expires_at_unix':                 expires_at,
+            'expires_at_utc':                  _utc(expires_at),
+            'ttl_seconds':                     (expires_at - now) if expires_at else None,
+            'expired':                         bool(expires_at) and (expires_at - now) <= 0,
+            'last_refresh_attempt_utc':        _utc(last.get('at')),
+            'last_refresh_ok':                 last.get('ok'),
+            'last_refresh_detail':             last.get('detail', ''),
+            'env_WHOOP_CLIENT_ID_present':     bool(os.environ.get('WHOOP_CLIENT_ID', '').strip()),
+            'env_WHOOP_CLIENT_SECRET_present': bool(os.environ.get('WHOOP_CLIENT_SECRET', '').strip()),
+            'server_time_utc':                 _utc(now),
+        })
 
     def _whoop_status(self):
         """Return WHOOP connection status and token expiry from Supabase."""
