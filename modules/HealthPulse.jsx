@@ -65,6 +65,7 @@ function HealthPulse() {
   const [whoopError,   setWhoopError]   = useStateHP('');
   const [lastSync,     setLastSync]     = useStateHP('');
   const [needsReconnect, setNeedsReconnect] = useStateHP(false); // scope/sleep banner
+  const [whoop401,        setWhoop401]      = useStateHP(false); // token expired → clean reconnect
 
   /* ── manual-field inline editing (weight + vo2) ── */
   const [inlineEdit,  setInlineEdit]  = useStateHP(null);   // 'weight' | 'vo2' | null
@@ -92,7 +93,17 @@ function HealthPulse() {
         fetch('/whoop/data?endpoint=cycle'),
       ]);
 
-      // If every endpoint failed, treat as a hard error (keeps cached data).
+      // 401 anywhere → token is dead. Show ONLY a clean "Reconnect Whoop"
+      // button — no status codes, no technical text. Keep last cached metrics.
+      if ([recRes, sleepRes, cycleRes].some(r => r.status === 401)) {
+        setWhoop401(true);
+        setWhoopStatus('idle');
+        setWhoopError('');
+        return;
+      }
+      setWhoop401(false);
+
+      // If every endpoint failed for another reason, keep cached data silently.
       if (!recRes.ok && !sleepRes.ok && !cycleRes.ok) {
         throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}/${cycleRes.status}`);
       }
@@ -225,8 +236,28 @@ function HealthPulse() {
         </span>
       }>
 
+      {/* ── 401 → clean Reconnect button only (no codes, no technical text) ── */}
+      {whoop401 && (
+        <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'center' }}>
+          <button
+            onClick={connectWhoop}
+            className="sos-tap"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              minHeight: 44, padding: '0 18px',
+              background: 'var(--accent)', color: '#001218', border: 'none',
+              borderRadius: 6, cursor: 'pointer',
+              fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, letterSpacing: '0.04em',
+            }}
+          >
+            <Icon name="refresh-cw" size={14} />
+            Reconnect Whoop
+          </button>
+        </div>
+      )}
+
       {/* ── Reconnect banner — shown when recovery syncs but sleep is empty ── */}
-      {needsReconnect && (
+      {!whoop401 && needsReconnect && (
         <div
           onClick={connectWhoop}
           style={{

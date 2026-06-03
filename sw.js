@@ -6,7 +6,7 @@
      • Everything else → network-first, fall back to cache
    ============================================================ */
 
-const CACHE_NAME   = 'spencer-os-v50';
+const CACHE_NAME   = 'spencer-os-v51';
 const STATIC_URLS  = [
   '/',
   '/index.html',

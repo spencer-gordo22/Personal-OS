@@ -37,132 +37,26 @@ function getWeekDays() {
   return days;
 }
 
-function calcStreak(historyMap, key = 'done') {
-  let s = 0;
-  const today = new Date();
-  for (let i = 1; i <= 365; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const entry = (historyMap || {})[toISO(d)];
-    if (entry && entry[key]) s++;
-    else break;
-  }
-  return s;
-}
-
 /* Guess workout type from name or exercise list */
 function guessType(title = '', exercises = []) {
   const t = title.toLowerCase();
-  if (/push|chest|bench|shoulder|tricep|press/.test(t))  return 'PUSH';
-  if (/pull|back|row|lat|bicep|curl|deadlift/.test(t))   return 'PULL';
+  if (/push|chest|bench|shoulder|tricep|press/.test(t))     return 'PUSH';
+  if (/pull|back|row|lat|bicep|curl|deadlift/.test(t))      return 'PULL';
   if (/leg|squat|lunge|quad|hamstring|glute|lower/.test(t)) return 'LEGS';
-  if (/shar|arm|lateral/.test(t))                         return 'SHARMS';
-  if (/rest|off|yoga|mobility|stretch/.test(t))           return 'REST';
+  if (/shar|arm|lateral/.test(t))                           return 'SHARMS';
+  if (/rest|off|yoga|mobility|stretch/.test(t))             return 'REST';
   const enames = exercises.map(e => (e.name || '').toLowerCase()).join(' ');
-  if (/bench|chest|press|shoulder|tricep/.test(enames))  return 'PUSH';
-  if (/row|lat|bicep|curl|deadlift/.test(enames))        return 'PULL';
-  if (/squat|lunge|leg press|hamstring/.test(enames))    return 'LEGS';
+  if (/bench|chest|press|shoulder|tricep/.test(enames))     return 'PUSH';
+  if (/row|lat|bicep|curl|deadlift/.test(enames))           return 'PULL';
+  if (/squat|lunge|leg press|hamstring/.test(enames))       return 'LEGS';
   return 'PUSH';
 }
 
 /* Format total volume nicely */
 function fmtVol(lbs) {
-  if (!lbs || lbs <= 0) return null;
+  if (!lbs || lbs <= 0) return '—';
   if (lbs >= 1000) return `${(lbs / 1000).toFixed(1)}k lbs`;
   return `${Math.round(lbs).toLocaleString()} lbs`;
-}
-
-/* ── stat tile ── */
-function WktStat({ label, value, tone }) {
-  const colors = { pos: 'var(--pos)', neg: 'var(--neg)', warn: 'var(--warn)', accent: 'var(--accent)' };
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span className="label-micro" style={{ color: 'var(--fg-3)' }}>{label}</span>
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 500, color: tone ? colors[tone] : 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>{value}</span>
-    </div>
-  );
-}
-
-/* ── Session row — collapses / expands exercise detail ── */
-function SessionRow({ session, onDelete }) {
-  const [expanded, setExpanded] = useStateWkt(false);
-  const isMobile = useIsMobile();
-  const typeColor = TYPE_COLOR[session.type] || 'var(--fg-2)';
-  const hasExercises = session.exercises && session.exercises.length > 0;
-  const vol = fmtVol(session.totalVolume);
-
-  return (
-    <div style={{ padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-      {/* ── header ── */}
-      <div
-        onClick={() => hasExercises && setExpanded(e => !e)}
-        style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: hasExercises ? 'pointer' : 'default' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
-            color: 'var(--fg-1)', marginBottom: 3,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {session.name || 'Workout'}
-          </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', display: 'flex', flexWrap: 'wrap', gap: '0 8px' }}>
-            <span>{session.date}</span>
-            <span style={{ color: typeColor }}>{session.type}</span>
-            {session.duration && <span>{session.duration}</span>}
-            {vol && <span style={{ color: 'var(--fg-2)' }}>{vol}</span>}
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {hasExercises && (
-            <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={11} style={{ color: 'var(--fg-4)' }} />
-          )}
-          <span
-            onClick={e => { e.stopPropagation(); onDelete(); }}
-            style={{ color: 'var(--neg)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-            <Icon name="x" size={11} />
-          </span>
-        </div>
-      </div>
-
-      {/* ── exercise detail ── */}
-      {expanded && hasExercises && (
-        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {session.exercises.map((ex, i) => {
-            const sets = ex.sets || [];
-            const exVol = sets.reduce((sum, s) => sum + ((s.reps || 0) * (s.weight || 0)), 0);
-            return (
-              <div key={i} style={{ padding: '6px 8px', background: 'var(--bg-1)', borderRadius: 4 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600, color: 'var(--fg-2)' }}>
-                    {ex.name}
-                  </span>
-                  {exVol > 0 && (
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)' }}>
-                      {fmtVol(exVol)}
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 8px' }}>
-                  {sets.map((s, j) => (
-                    <span key={j} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-3)' }}>
-                      {s.reps}r × {s.weight}lb
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── legacy notes fallback (backward compat with old sessions) ── */}
-      {!hasExercises && session.notes && (
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
-          {session.notes.slice(0, 200)}{session.notes.length > 200 ? '…' : ''}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /* ════════════════════════════════════════════════════════════ main component */
@@ -173,35 +67,25 @@ function Workouts() {
   const weekStart = week[0], weekEnd = week[6];
   const wkLabel   = `${MONTH_ABBR[weekStart.month]} ${weekStart.date} → ${weekEnd.date}`;
 
-  /* ── workout history (week strip done/type state) ── */
+  /* ── workout week strip (done / type state) ── */
   const [workouts, setWorkouts] = useLocalStorage('sos_workouts_v4', () => {
     const init = {};
     week.forEach(d => { init[d.iso] = { type: d.defType, done: false }; });
     return init;
   });
 
-  /* ── BJJ history ── */
-  const [bjj, setBjj] = useLocalStorage('sos_bjj', {});
+  /* ── week-strip type picker ── */
+  const [picking, setPicking] = useStateWkt(null);
+  const [pickPos, setPickPos] = useStateWkt(null);
 
-  /* ── Session log (parsed workouts) ── */
-  const [sessions, setSessions] = useLocalStorage('sos_workout_sessions_v2', []);
+  /* ── paste / parse / confirm flow ── */
+  const [pasteText, setPasteText] = useStateWkt('');
+  const [parsing,   setParsing]   = useStateWkt(false);
+  const [parseErr,  setParseErr]  = useStateWkt('');
+  const [parsed,    setParsed]    = useStateWkt(null);   // confirmation card data
+  const [saving,    setSaving]    = useStateWkt(false);
 
-  /* ── Week-strip type picker ── */
-  const [picking, setPicking]   = useStateWkt(null);
-  const [pickPos, setPickPos]   = useStateWkt(null);
-
-  /* ── Paste form ── */
-  const [showPaste,  setShowPaste]  = useStateWkt(false);
-  const [pasteText,  setPasteText]  = useStateWkt('');
-  const [parsStatus, setParsStatus] = useStateWkt('idle');  // idle | parsing | error
-  const [parsError,  setParsError]  = useStateWkt('');
-
-  /* ── derived ── */
-  const todayWkt  = workouts[todayISO] || { type: 'PUSH', done: false };
-  const wktDone   = week.filter(d => workouts[d.iso] && workouts[d.iso].done).length;
-  const bjjDone   = week.filter(d => bjj[d.iso] && bjj[d.iso].done).length;
-  const wktStreak = calcStreak(workouts, 'done');
-  const bjjStreak = calcStreak(bjj, 'done');
+  const wktDone = week.filter(d => workouts[d.iso] && workouts[d.iso].done).length;
 
   /* ── week strip handlers ── */
   const openPick = (iso, e) => {
@@ -216,14 +100,12 @@ function Workouts() {
   };
   const toggleWktDone = (iso) =>
     setWorkouts(w => ({ ...w, [iso]: { ...(w[iso] || {}), done: !(w[iso] && w[iso].done) } }));
-  const toggleBjj = (iso) =>
-    setBjj(b => ({ ...b, [iso]: { done: !(b[iso] && b[iso].done) } }));
 
-  /* ── parse + save workout ── */
-  async function parsePaste() {
+  /* ── parse pasted text → confirmation card (does NOT save yet) ── */
+  async function parseWorkout() {
     const text = pasteText.trim();
-    if (!text || parsStatus === 'parsing') return;
-    setParsStatus('parsing'); setParsError('');
+    if (!text || parsing) return;
+    setParsing(true); setParseErr('');
     try {
       const r = await fetch('/api/parse-workout', {
         method: 'POST',
@@ -235,34 +117,63 @@ function Workouts() {
         throw new Error(err.error || `HTTP ${r.status}`);
       }
       const data = await r.json();
-
-      const session = {
-        id:          `wkt_${Date.now()}`,
-        date:        data.date        || todayISO,
-        name:        data.name        || 'Workout',
-        duration:    data.duration    || '',
-        totalVolume: data.totalVolume || 0,
-        exercises:   data.exercises   || [],
-        type:        guessType(data.name || '', data.exercises || []),
-        source:      'paste',
-      };
-
-      /* Save session */
-      setSessions(prev => [session, ...(prev || [])]);
-
-      /* Auto-mark week strip day as done */
-      setWorkouts(w => {
-        if (!week.some(d => d.iso === session.date)) return w;
-        return { ...w, [session.date]: { ...(w[session.date] || {}), type: session.type, done: true } };
+      setParsed({
+        name:          data.name        || 'Workout',
+        date:          data.date        || todayISO,
+        totalVolume:   data.totalVolume || 0,
+        exerciseCount: (data.exercises || []).length,
+        type:          guessType(data.name || '', data.exercises || []),
       });
-
-      setPasteText(''); setShowPaste(false); setParsStatus('idle');
     } catch (e) {
-      setParsStatus('error'); setParsError(e.message);
+      setParseErr('Could not parse — check the text and try again');
+      console.warn('[Workouts] parse error:', e);
+    } finally {
+      setParsing(false);
     }
   }
 
-  const deleteSession = id => setSessions(s => s.filter(x => x.id !== id));
+  /* ── confirm → save to Supabase, mark week strip, reset ── */
+  async function confirmSave() {
+    if (!parsed || saving) return;
+    setSaving(true);
+    const row = {
+      name:           parsed.name,
+      date:           parsed.date,
+      type:           parsed.type,
+      total_volume:   parsed.totalVolume,
+      exercise_count: parsed.exerciseCount,
+    };
+    try {
+      const db = await (window._supaReady || Promise.resolve(window._supa || null));
+      if (db) {
+        const { error } = await db.from('workout_sessions').insert(row);
+        if (error) {
+          // table may not exist yet — keep a local copy so confirm never fails
+          console.warn('[Workouts] Supabase insert failed, caching locally:', error.message);
+          const cache = JSON.parse(localStorage.getItem('sos_workout_sessions_cache') || '[]');
+          cache.unshift({ ...row, id: `wkt_${Date.now()}` });
+          localStorage.setItem('sos_workout_sessions_cache', JSON.stringify(cache));
+        } else {
+          console.log('[Workouts] saved to Supabase ✓', row);
+        }
+      }
+    } catch (e) {
+      console.warn('[Workouts] save error:', e);
+    }
+
+    /* auto-mark the matching week-strip day done */
+    setWorkouts(w => {
+      if (!week.some(d => d.iso === parsed.date)) return w;
+      return { ...w, [parsed.date]: { ...(w[parsed.date] || {}), type: parsed.type, done: true } };
+    });
+
+    /* reset everything */
+    setParsed(null);
+    setPasteText('');
+    setSaving(false);
+  }
+
+  const discardParsed = () => { setParsed(null); };
 
   /* ════════════════════════════════════════════════════════════ render */
   return (
@@ -274,7 +185,7 @@ function Workouts() {
       }>
 
       {/* ══ workout week strip ══ */}
-      <div className="sos-week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 10 }}>
+      <div className="sos-week-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, marginBottom: 14 }}>
         {week.map(d => {
           const wkt = workouts[d.iso] || { type: d.defType, done: false };
           const typeColor = TYPE_COLOR[wkt.type] || 'var(--fg-3)';
@@ -282,6 +193,7 @@ function Workouts() {
             <div key={d.iso} style={{ position: 'relative' }}>
               <div
                 onClick={(e) => openPick(d.iso, e)}
+                className="sos-tap"
                 style={{
                   background: d.isToday ? 'var(--bg-3)' : 'var(--bg-1)',
                   border: '1px solid ' + (d.isToday ? 'var(--accent)' : picking === d.iso ? 'var(--border-strong)' : 'var(--border)'),
@@ -290,7 +202,6 @@ function Workouts() {
                   cursor: 'pointer',
                   boxShadow: d.isToday ? 'inset 0 0 0 1px rgba(0,212,255,0.30)' : 'none',
                   opacity: wkt.done && !d.isToday ? 0.6 : 1,
-                  transition: 'border-color 120ms, opacity 120ms',
                   userSelect: 'none',
                 }}>
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: d.isToday ? 'var(--accent)' : 'var(--fg-3)', letterSpacing: '0.08em' }}>{d.day}</span>
@@ -302,12 +213,13 @@ function Workouts() {
                 }}>{wkt.type}</span>
                 <div
                   onClick={(e) => { e.stopPropagation(); toggleWktDone(d.iso); }}
+                  className="sos-tap"
                   title={wkt.done ? 'Mark incomplete' : 'Mark done'}
                   style={{
-                    width: 8, height: 8, borderRadius: '50%',
+                    width: 10, height: 10, borderRadius: '50%',
                     background: wkt.done ? 'var(--pos)' : (d.isToday ? 'var(--accent)' : 'var(--bg-3)'),
                     border: !wkt.done && !d.isToday ? '1px solid var(--border-strong)' : 'none',
-                    marginTop: 2, cursor: 'pointer', transition: 'background 120ms',
+                    marginTop: 2, cursor: 'pointer',
                   }} />
               </div>
             </div>
@@ -315,118 +227,91 @@ function Workouts() {
         })}
       </div>
 
-      {/* ══ BJJ strip ══ */}
-      <div style={{ marginBottom: 10 }}>
-        <span className="label-micro" style={{ display: 'block', color: 'var(--fg-4)', marginBottom: 5, letterSpacing: '0.08em' }}>
-          BJJ / COMBAT · {bjjDone}/7 this week{bjjStreak > 0 ? ` · ${bjjStreak}d streak` : ''}
-        </span>
-        <div className="sos-bjj-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
-          {week.map(d => {
-            const went = bjj[d.iso] && bjj[d.iso].done;
-            return (
-              <div
-                key={d.iso}
-                onClick={() => toggleBjj(d.iso)}
-                title={went ? 'Mark absent' : 'Mark attended'}
-                style={{
-                  background: went ? 'rgba(255,181,71,0.15)' : 'var(--bg-1)',
-                  border: `1px solid ${went ? 'var(--warn)' : d.isToday ? 'var(--border-strong)' : 'var(--border)'}`,
-                  borderRadius: 4, padding: '6px 4px',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-                  cursor: 'pointer', userSelect: 'none', transition: 'background 120ms, border-color 120ms',
-                }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: d.isToday ? 'var(--accent)' : 'var(--fg-4)', letterSpacing: '0.06em' }}>{d.day}</span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500, color: went ? 'var(--warn)' : 'var(--fg-3)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{d.date}</span>
-                <span style={{ fontSize: 10, lineHeight: 1 }}>{went ? '🥋' : '·'}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ══ stats row ══ */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)', marginBottom: 10 }}>
-        <WktStat label="wkt this wk"  value={`${wktDone} / 7`}         tone="pos"    />
-        <WktStat label="bjj this wk"  value={`${bjjDone} / 7`}         tone="warn"   />
-        <WktStat label="wkt streak"   value={wktStreak > 0 ? `${wktStreak}d` : '—'} tone={wktStreak >= 7 ? 'accent' : wktStreak >= 3 ? 'pos' : null} />
-        <WktStat label="bjj streak"   value={bjjStreak > 0 ? `${bjjStreak}d` : '—'} tone={bjjStreak >= 7 ? 'accent' : bjjStreak >= 3 ? 'warn' : null} />
-      </div>
-
-      {/* ══ session log ══ */}
-      <div style={{ borderTop: '1px dashed var(--border)', paddingTop: 10 }}>
-        {/* header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span className="label-micro" style={{ color: 'var(--fg-4)' }}>
-            session log
-            {sessions.length > 0 && <span style={{ marginLeft: 6, color: 'var(--fg-3)' }}>{sessions.length} workouts</span>}
-          </span>
-          <span
-            onClick={() => { setShowPaste(s => !s); setParsStatus('idle'); setParsError(''); }}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: showPaste ? 'var(--accent)' : 'var(--fg-3)', cursor: 'pointer', letterSpacing: '0.06em' }}>
-            {showPaste ? '✕ CANCEL' : '+ PASTE WORKOUT'}
-          </span>
-        </div>
-
-        {/* paste form */}
-        {showPaste && (
-          <div style={{ marginBottom: 10, padding: 10, background: 'var(--bg-1)', borderRadius: 6, border: '1px solid var(--border)' }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', lineHeight: 1.6, marginBottom: 7 }}>
-              Copy your workout from the Hevy app and paste it below.<br/>
-              OpenAI will extract exercises, sets, reps, weight, and volume.
+      {/* ══ parse / confirm zone ══ */}
+      {!parsed ? (
+        /* ── paste area + Parse button ── */
+        <div>
+          <textarea
+            value={pasteText}
+            onChange={e => { setPasteText(e.target.value); if (parseErr) setParseErr(''); }}
+            placeholder="Paste your Hevy workout summary here"
+            rows={isMobile ? 7 : 6}
+            style={{
+              width: '100%', background: 'var(--bg-1)',
+              border: `1px solid ${parseErr ? 'var(--neg)' : 'var(--border-strong)'}`,
+              borderRadius: 6, padding: '11px 12px',
+              color: 'var(--fg-1)', fontFamily: 'var(--font-mono)', fontSize: 11,
+              resize: 'vertical', outline: 'none', boxSizing: 'border-box', lineHeight: 1.55,
+              WebkitOverflowScrolling: 'touch',
+            }}
+          />
+          {parseErr && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)', marginTop: 6 }}>
+              ⚠ {parseErr}
             </div>
-            <textarea
-              autoFocus
-              value={pasteText}
-              onChange={e => { setPasteText(e.target.value); if (parsStatus === 'error') setParsStatus('idle'); }}
-              placeholder={'Paste Hevy workout summary here…\n\nE.g.:\nPush Day A · May 27 · 62 min\nBench Press\n  Set 1: 185lb × 8 reps\n  Set 2: 185lb × 8 reps\nOHP\n  Set 1: 115lb × 10 reps'}
-              rows={isMobile ? 8 : 6}
-              style={{
-                width: '100%', background: 'var(--bg-3)',
-                border: `1px solid ${parsStatus === 'error' ? 'var(--neg)' : 'var(--border-strong)'}`,
-                borderRadius: 3, padding: '7px 9px',
-                color: 'var(--fg-1)', fontFamily: 'var(--font-mono)', fontSize: 10,
-                resize: 'vertical', outline: 'none', boxSizing: 'border-box', lineHeight: 1.5,
-              }}
-            />
-            {parsError && (
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--neg)', marginTop: 5 }}>
-                ⚠ {parsError}
+          )}
+          <button
+            onClick={parseWorkout}
+            disabled={!pasteText.trim() || parsing}
+            className="sos-tap"
+            style={{
+              width: '100%', marginTop: 10, minHeight: 44,
+              fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em',
+              color:      (!pasteText.trim() || parsing) ? 'var(--fg-4)' : '#001218',
+              background: (!pasteText.trim() || parsing) ? 'var(--bg-3)' : 'var(--accent)',
+              border: 'none', borderRadius: 6,
+              cursor: (!pasteText.trim() || parsing) ? 'default' : 'pointer',
+            }}>
+            {parsing ? 'PARSING…' : 'Parse Workout'}
+          </button>
+        </div>
+      ) : (
+        /* ── clean confirmation card ── */
+        <div style={{
+          background: 'var(--bg-1)', border: '1px solid var(--accent)',
+          borderRadius: 8, padding: '14px 14px 12px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                fontFamily: 'var(--font-sans)', fontSize: 15, fontWeight: 600, color: 'var(--fg-1)',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{parsed.name}</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                {parsed.date}
+                <span style={{ color: TYPE_COLOR[parsed.type] || 'var(--fg-3)', marginLeft: 8 }}>{parsed.type}</span>
               </div>
-            )}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 7 }}>
-              <button
-                onClick={parsePaste}
-                disabled={!pasteText.trim() || parsStatus === 'parsing'}
-                style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.06em',
-                  color: (!pasteText.trim() || parsStatus === 'parsing') ? 'var(--fg-4)' : 'var(--bg-0)',
-                  background: (!pasteText.trim() || parsStatus === 'parsing') ? 'var(--bg-3)' : 'var(--accent)',
-                  border: 'none', borderRadius: 3, padding: '6px 14px', cursor: (!pasteText.trim() || parsStatus === 'parsing') ? 'default' : 'pointer',
-                  transition: 'background 120ms, color 120ms',
-                }}>
-                {parsStatus === 'parsing' ? '⏳ PARSING…' : 'PARSE + SAVE →'}
-              </button>
+            </div>
+            <span onClick={discardParsed} className="sos-tap" style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'flex', padding: 4 }}>
+              <Icon name="x" size={14} />
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontFamily: 'var(--font-sans)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 3 }}>total volume</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 17, fontWeight: 500, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>{fmtVol(parsed.totalVolume)}</div>
+            </div>
+            <div>
+              <div style={{ fontFamily: 'var(--font-sans)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 3 }}>exercises</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 17, fontWeight: 500, color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>{parsed.exerciseCount}</div>
             </div>
           </div>
-        )}
 
-        {/* empty state */}
-        {sessions.length === 0 && !showPaste && (
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.06em', padding: '4px 0' }}>
-            No sessions yet — paste a Hevy workout to get started
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={discardParsed} className="sos-tap" style={{
+              flex: 1, minHeight: 44, fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.06em',
+              color: 'var(--fg-3)', background: 'var(--bg-3)', border: '1px solid var(--border)',
+              borderRadius: 6, cursor: 'pointer',
+            }}>DISCARD</button>
+            <button onClick={confirmSave} disabled={saving} className="sos-tap" style={{
+              flex: 2, minHeight: 44, fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 600, letterSpacing: '0.06em',
+              color: '#001218', background: 'var(--accent)', border: 'none',
+              borderRadius: 6, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1,
+            }}>{saving ? 'SAVING…' : 'Confirm & Save'}</button>
           </div>
-        )}
-
-        {/* session list */}
-        {sessions.slice(0, 8).map(s => (
-          <SessionRow key={s.id} session={s} onDelete={() => deleteSession(s.id)} />
-        ))}
-        {sessions.length > 8 && (
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.06em', paddingTop: 6 }}>
-            +{sessions.length - 8} older sessions
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* ══ type picker portal ══ */}
       {picking && pickPos && ReactDOM.createPortal(
@@ -443,9 +328,10 @@ function Workouts() {
             {WORKOUT_TYPES.map(t => (
               <button key={t}
                 onClick={() => setType(picking, t)}
+                className="sos-tap"
                 style={{
                   background: (workouts[picking]?.type === t) ? 'var(--bg-3)' : 'transparent',
-                  border: 'none', borderRadius: 3, padding: '6px 10px',
+                  border: 'none', borderRadius: 3, padding: '8px 10px', minHeight: 36,
                   fontFamily: 'var(--font-mono)', fontSize: 10, color: TYPE_COLOR[t],
                   letterSpacing: '0.06em', cursor: 'pointer', textAlign: 'left',
                 }}>{t}</button>

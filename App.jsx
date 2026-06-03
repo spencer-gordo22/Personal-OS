@@ -217,7 +217,7 @@ function TasksPreview({ onNavigate }) {
       }
     >
       {/* ── task list ── */}
-      <div style={{ overflowY: 'auto', maxHeight: 300 }}>
+      <div style={{ overflowY: 'auto', maxHeight: 300, WebkitOverflowScrolling: 'touch' }}>
         {loading && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>loading…</div>}
         {!loading && visible.length === 0 && (
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>all clear ✓ · add a task below</div>

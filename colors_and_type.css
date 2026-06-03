@@ -530,3 +530,55 @@ html, body {
   .sos-bottom-nav { display: none !important; }
   .sos-sidebar    { display: flex !important; }
 }
+
+/* ============================================================
+   Native-feel touch polish (global; negligible cost on desktop)
+   ============================================================ */
+
+/* Kill the 300ms tap delay + double-tap zoom on interactive elements */
+button, a, label, select,
+.sos-tap, .pill, .btn, .btn-primary, .btn-ghost,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* Consistent 0.15s transitions on interactive elements */
+button, .btn, .btn-primary, .btn-ghost, .card,
+.sos-tap, .pill, input, textarea, select {
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, opacity 0.15s ease, transform 0.15s ease,
+              box-shadow 0.15s ease;
+}
+
+/* Subtle press feedback on tappable elements */
+.sos-tap:active { transform: scale(0.97); }
+
+/* Momentum scrolling everywhere that scrolls */
+.sos-main, .sos-scroll-x, .sos-scroll-y, textarea {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Main scroller: native momentum + no page-behind rubber-banding */
+.sos-main {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Neutralise sticky :hover after a tap on touch devices */
+@media (hover: none) {
+  .btn:hover, .btn-primary:hover, .btn-ghost:hover,
+  .input:hover, .card:hover, .sos-tap:hover, .pill:hover {
+    background: inherit;
+    border-color: inherit;
+    color: inherit;
+  }
+}
+
+/* Mobile: 44px minimum tap targets on real buttons + nav items.
+   (Tiny inline chips keep their size; primary actions set 44px inline.) */
+@media (max-width: 768px) {
+  .btn, .btn-primary, .btn-ghost,
+  .sos-bottom-nav > * {
+    min-height: 44px;
+  }
+}
