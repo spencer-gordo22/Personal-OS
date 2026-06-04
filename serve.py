@@ -9,6 +9,7 @@ Static files  : no-cache headers so every edit is immediately fresh.
 /telegram/*   : Telegram bot webhook — voice→Whisper→GPT→Supabase CRM insert.
 """
 import datetime
+import gzip
 import http.server
 import json
 import os
@@ -243,50 +244,103 @@ def _start_daily_push_scheduler() -> None:
 # Supabase kv_store helpers  (server-side token persistence)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _supa_kv_get(key: str):
-    """Read a value from Supabase kv_store. Returns parsed Python object or None."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Supabase kv_store — the ONE pair of helpers all persistent storage goes through.
+#
+#   kv_get(key)        → parsed value or None
+#   kv_set(key, value) → True on success
+#
+# The kv_store.value column is NOT NULL, so kv_set(key, None) DELETES the row
+# instead of upserting a null (which previously caused the repeated HTTP 400
+# "null value in column value violates not-null constraint" errors in the logs).
+# Both helpers retry exactly once on a transient failure.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def kv_get(key: str):
+    """Read a value from kv_store. Returns the parsed value or None. Retries once."""
     if not SUPA_URL or not SUPA_KEY:
         return None
     url = (f'{SUPA_URL}/rest/v1/kv_store'
            f'?key=eq.{urllib.parse.quote(key)}&select=value&limit=1')
-    req = urllib.request.Request(url, headers={
+    headers = {
         'apikey':        SUPA_KEY,
         'Authorization': f'Bearer {SUPA_KEY}',
         'Accept':        'application/json',
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            rows = json.loads(r.read().decode())
-            if rows:
-                return rows[0]['value']
-    except Exception as e:
-        print(f'[kv get] {key}: {e}')
+    }
+    for attempt in (1, 2):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as r:
+                rows = json.loads(r.read().decode())
+            return rows[0]['value'] if rows else None
+        except Exception as e:
+            if attempt == 2:
+                print(f'[kv get] {key}: {e}')
+                return None
+            time.sleep(0.3)
     return None
 
 
-def _supa_kv_set(key: str, value) -> bool:
-    """Upsert a value in Supabase kv_store. Returns True on success."""
+def kv_set(key: str, value) -> bool:
+    """
+    Upsert a value in kv_store. Retries once.
+    value=None DELETEs the row (kv_store.value is NOT NULL — never POST null).
+    """
     if not SUPA_URL or not SUPA_KEY:
         return False
+    base_headers = {
+        'apikey':        SUPA_KEY,
+        'Authorization': f'Bearer {SUPA_KEY}',
+        'Content-Type':  'application/json',
+    }
+
+    # ── clear → DELETE (avoids NOT-NULL 400) ──
+    if value is None:
+        del_url = f'{SUPA_URL}/rest/v1/kv_store?key=eq.{urllib.parse.quote(key)}'
+        for attempt in (1, 2):
+            try:
+                req = urllib.request.Request(del_url, method='DELETE', headers=base_headers)
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status in (200, 204)
+            except Exception as e:
+                if attempt == 2:
+                    print(f'[kv del] {key}: {e}')
+                    return False
+                time.sleep(0.3)
+        return False
+
+    # ── upsert ──
     body = json.dumps({
         'key':        key,
         'value':      value,
         'updated_at': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
     }).encode()
-    req = urllib.request.Request(
-        f'{SUPA_URL}/rest/v1/kv_store', data=body, method='POST',
-        headers={
-            'apikey':        SUPA_KEY,
-            'Authorization': f'Bearer {SUPA_KEY}',
-            'Content-Type':  'application/json',
-            'Prefer':        'resolution=merge-duplicates,return=minimal',
-        })
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status in (200, 201, 204)
-    except Exception as e:
-        print(f'[kv set] {key}: {e}')
-        return False
+    headers = {**base_headers, 'Prefer': 'resolution=merge-duplicates,return=minimal'}
+    for attempt in (1, 2):
+        try:
+            req = urllib.request.Request(
+                f'{SUPA_URL}/rest/v1/kv_store', data=body, method='POST', headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status in (200, 201, 204)
+        except urllib.request.HTTPError as e:
+            detail = ''
+            try: detail = e.read().decode()[:200]
+            except Exception: pass
+            if attempt == 2:
+                print(f'[kv set] {key}: HTTP {e.code}: {detail}')
+                return False
+            time.sleep(0.3)
+        except Exception as e:
+            if attempt == 2:
+                print(f'[kv set] {key}: {e}')
+                return False
+            time.sleep(0.3)
+    return False
+
+
+# Backward-compat aliases — every existing caller routes through the new helpers.
+_supa_kv_get = kv_get
+_supa_kv_set = kv_set
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +364,11 @@ def _google_exchange_code(code: str) -> dict:
 
 
 def _google_refresh_access_token(refresh_token: str) -> dict:
-    """Use refresh token to get a new access token."""
+    """
+    Use refresh token to get a new access token. ALWAYS returns a dict; on an
+    HTTP error it parses Google's JSON error body and returns it (so callers can
+    check for 'error' / 'invalid_grant' instead of catching a raw HTTPError).
+    """
     post_data = urllib.parse.urlencode({
         'client_id':     GOOGLE_CLIENT_ID,
         'client_secret': GOOGLE_CLIENT_SECRET,
@@ -320,15 +378,31 @@ def _google_refresh_access_token(refresh_token: str) -> dict:
     req = urllib.request.Request(
         GOOGLE_TOKEN_URL, data=post_data, method='POST',
         headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode())
+    except urllib.request.HTTPError as e:
+        raw = ''
+        try: raw = e.read().decode()
+        except Exception: pass
+        print(f'[google] refresh HTTP {e.code}: {raw[:300]}')
+        try:
+            return json.loads(raw)            # {'error': 'invalid_grant', ...}
+        except Exception:
+            return {'error': f'http_{e.code}', 'error_description': raw[:200]}
+    except Exception as e:
+        print(f'[google] refresh transient error: {e}')
+        return {'error': 'transient', 'error_description': str(e)}
 
 
 def _google_get_valid_token(force_refresh: bool = False) -> 'str | None':
     """
-    Read Google tokens from Supabase kv_store; auto-refresh if expired or
-    within 5 minutes of expiry (or forced).  Returns a valid access_token
-    string or None if not connected. Raises ValueError if refresh fails.
+    Read Google tokens from kv_store; auto-refresh if expired/within 5 min (or
+    forced). Returns a valid access_token or None if not connected.
+
+    On invalid_grant (refresh token revoked/expired) the stored tokens are
+    DELETED so the UI cleanly shows "reconnect" — never surfaces a raw 400.
+    Transient refresh failures keep the tokens and return None.
     """
     tokens = _supa_kv_get('sos_gcal_tokens')
     if not tokens or not isinstance(tokens, dict):
@@ -348,9 +422,18 @@ def _google_get_valid_token(force_refresh: bool = False) -> 'str | None':
         print(f'[google] {"forced" if force_refresh else "proactive"} token refresh…')
         refreshed = _google_refresh_access_token(refresh_token)
         if 'error' in refreshed:
-            desc = refreshed.get('error_description') or refreshed.get('error')
-            raise ValueError(f'Google refresh error: {desc}')
-        access_token           = refreshed['access_token']
+            err = refreshed.get('error', '')
+            desc = refreshed.get('error_description') or err
+            if err == 'invalid_grant':
+                # refresh token is dead → clear so UI prompts a clean reconnect
+                _supa_kv_set('sos_gcal_tokens', None)
+                print('[google] invalid_grant → cleared tokens, reconnect required')
+            else:
+                print(f'[google] refresh failed ({desc}) — keeping tokens')
+            return None
+        access_token           = refreshed.get('access_token')
+        if not access_token:
+            return None
         tokens['access_token'] = access_token
         tokens['expires_at']   = int((now_sec + refreshed.get('expires_in', 3600)) * 1000)
         _supa_kv_set('sos_gcal_tokens', tokens)
@@ -633,8 +716,29 @@ except ImportError:
     _YF_AVAILABLE = False
     print('[quotes] yfinance not installed; using Yahoo v8 only')
 
-_QUOTE_CACHE:      dict            = {}   # sym → last-good quote dict
+_QUOTE_TTL         = 60                    # serve cached quotes for ≥60s; never hammer Yahoo
+_QUOTE_CACHE:      dict            = {}    # sym → {'data': quote dict, 'ts': float}
 _QUOTE_CACHE_LOCK: threading.Lock  = threading.Lock()
+_QUOTE_SYM_LOCKS:  dict            = {}    # sym → Lock (dedupes concurrent fetches per symbol)
+
+
+def _quote_sym_lock(sym: str) -> threading.Lock:
+    """Return a per-symbol lock so parallel requests fetch a symbol only once."""
+    with _QUOTE_CACHE_LOCK:
+        lk = _QUOTE_SYM_LOCKS.get(sym)
+        if lk is None:
+            lk = threading.Lock()
+            _QUOTE_SYM_LOCKS[sym] = lk
+        return lk
+
+
+def _quote_cache_fresh(sym: str):
+    """Return cached quote if within TTL, else None."""
+    with _QUOTE_CACHE_LOCK:
+        e = _QUOTE_CACHE.get(sym)
+    if e and (time.time() - e['ts']) < _QUOTE_TTL:
+        return e['data']
+    return None
 
 _YAHOO_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
              'AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -706,36 +810,40 @@ def _yahoo_v8_fetch(sym: str) -> dict:
 
 def _fetch_quote(sym: str) -> dict:
     """
-    yfinance → Yahoo v8 → in-memory cache.
-    Always returns a dict; raises only if all three fail.
-    Updates the cache on every successful fetch.
+    Cache-first quote fetch: 60s TTL cache → yfinance → Yahoo v8 → stale cache.
+    A per-symbol lock dedupes concurrent fetches so the same symbol is only
+    fetched once per cache period (fixes the parallel-startup hammering).
+    Always returns a dict; raises only if every source fails and no cache exists.
     """
-    # 1. yfinance
-    try:
-        result = _yf_fetch(sym)
+    # 1. fresh cache (within TTL) — zero network
+    fresh = _quote_cache_fresh(sym)
+    if fresh is not None:
+        return {**fresh, 'cached': True}
+
+    # 2. acquire the per-symbol lock so only ONE thread hits the network
+    with _quote_sym_lock(sym):
+        # re-check: another thread may have filled the cache while we waited
+        fresh = _quote_cache_fresh(sym)
+        if fresh is not None:
+            return {**fresh, 'cached': True}
+
+        for fetch in (_yf_fetch, _yahoo_v8_fetch):
+            try:
+                result = fetch(sym)
+                with _QUOTE_CACHE_LOCK:
+                    _QUOTE_CACHE[sym] = {'data': result, 'ts': time.time()}
+                return result
+            except Exception as e:
+                print(f'[quotes] {fetch.__name__} FAIL {sym}: {e}')
+
+        # 3. stale cache (any age) rather than nothing
         with _QUOTE_CACHE_LOCK:
-            _QUOTE_CACHE[sym] = result
-        return result
-    except Exception as e:
-        print(f'[quotes] yfinance FAIL {sym}: {e}')
+            e = _QUOTE_CACHE.get(sym)
+        if e:
+            print(f'[quotes] stale CACHE {sym}: ${e["data"]["price"]:.4f}')
+            return {**e['data'], 'stale': True}
 
-    # 2. Yahoo Finance v8
-    try:
-        result = _yahoo_v8_fetch(sym)
-        with _QUOTE_CACHE_LOCK:
-            _QUOTE_CACHE[sym] = result
-        return result
-    except Exception as e:
-        print(f'[quotes] Yahoo v8 FAIL {sym}: {e}')
-
-    # 3. In-memory cache (stale)
-    with _QUOTE_CACHE_LOCK:
-        cached = _QUOTE_CACHE.get(sym)
-    if cached:
-        print(f'[quotes] CACHE hit {sym}: ${cached["price"]:.4f} (stale)')
-        return {**cached, 'stale': True}
-
-    raise ValueError(f'All sources failed for {sym} and no cache available')
+        raise ValueError(f'All sources failed for {sym} and no cache available')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1099,7 +1207,57 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204); self.end_headers()
 
+    # ── centralized body writer: gzip for payloads > 1 KB when client allows ──
+    def _write_body(self, body: bytes, status: int = 200,
+                    content_type: str = 'application/json'):
+        """Write a response body, gzip-compressing it if >1KB and the client
+        sent Accept-Encoding: gzip. Sets Content-Length + Content-Encoding."""
+        headers = []
+        if len(body) > 1024 and 'gzip' in (self.headers.get('Accept-Encoding') or ''):
+            try:
+                body = gzip.compress(body)
+                headers.append(('Content-Encoding', 'gzip'))
+            except Exception:
+                pass  # fall back to uncompressed
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json(self, obj, status: int = 200):
+        self._write_body(json.dumps(obj, ensure_ascii=False).encode(),
+                         status, 'application/json')
+
     def do_GET(self):
+        try:
+            self._route_get()
+        except BrokenPipeError:
+            pass  # client disconnected mid-response — nothing to do
+        except Exception as exc:
+            self._handle_uncaught(exc)
+
+    def do_POST(self):
+        try:
+            self._route_post()
+        except BrokenPipeError:
+            pass
+        except Exception as exc:
+            self._handle_uncaught(exc)
+
+    def _handle_uncaught(self, exc: Exception):
+        """Global safety net — no endpoint may 500 or kill the worker thread."""
+        import traceback
+        print(f'[UNCAUGHT] {self.command} {self.path}: {exc}')
+        traceback.print_exc()
+        try:
+            self._send_json({'error': 'Internal server error', 'detail': str(exc)[:200]}, 500)
+        except Exception:
+            pass  # response may already be partially written
+
+    def _route_get(self):
         p = self.path
         if   p.startswith('/api/quotes'):            self._proxy_quotes()
         elif p.startswith('/api/config'):            self._api_config()
@@ -1122,7 +1280,7 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         elif p.startswith('/telegram/set-webhook'):  self._tg_set_webhook()
         else:                                        super().do_GET()
 
-    def do_POST(self):
+    def _route_post(self):
         p = self.path
         if   p.startswith('/whoop/token'):              self._whoop_token_exchange()
         elif p.startswith('/api/plaid/create-link-token'): self._plaid_link_token()
@@ -1166,13 +1324,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
                 except Exception as exc:
                     errors[sym] = str(exc); print(f'[quotes] FINAL FAIL {sym}: {exc}')
 
-        ok   = bool(quotes)
-        body = json.dumps({'ok': ok, 'quotes': quotes, 'errors': errors}).encode()
-        self.send_response(200 if ok else 502)
-        self.send_header('Content-Type',   'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        ok = bool(quotes)
+        self._write_body(json.dumps({'ok': ok, 'quotes': quotes, 'errors': errors}).encode(),
+                         200 if ok else 502, 'application/json')
 
     # ── WHOOP OAuth ───────────────────────────────────────────────────────────
 
@@ -1654,12 +1808,9 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         self._json({'ok': True, 'queued': True})
 
     def _json(self, data: dict):
-        body = json.dumps(data, ensure_ascii=False, indent=2).encode()
-        self.send_response(200)
-        self.send_header('Content-Type',   'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        # gzip-aware (compresses payloads > 1 KB when the client supports it)
+        self._write_body(json.dumps(data, ensure_ascii=False).encode(),
+                         200, 'application/json')
 
     # ── Workout paste parser ──────────────────────────────────────────────────
 
@@ -2021,12 +2172,7 @@ a{{color:#00D4FF;text-decoration:none;}}</style></head><body>
     # ── helper ───────────────────────────────────────────────────────────────
 
     def _json_error(self, code: int, msg: str):
-        body = json.dumps({'error': msg}).encode()
-        self.send_response(code)
-        self.send_header('Content-Type',   'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._write_body(json.dumps({'error': msg}).encode(), code, 'application/json')
 
 
 # ─────────────────────────────────────────────────────────────────────────────

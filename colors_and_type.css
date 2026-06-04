@@ -531,6 +531,16 @@ html, body {
   .sos-sidebar    { display: flex !important; }
 }
 
+/* ── Skeleton loader: gentle opacity pulse (GPU-accelerated, no layout shift) ── */
+@keyframes sos-skeleton-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.9; }
+}
+.sos-skeleton {
+  animation: sos-skeleton-pulse 1.3s ease-in-out infinite;
+  will-change: opacity;
+}
+
 /* ============================================================
    Native-feel touch polish (global; negligible cost on desktop)
    ============================================================ */

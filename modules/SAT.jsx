@@ -1,4 +1,4 @@
-/* global React, Card, Icon */
+/* global React, Card, Icon, Skeleton */
 const { useState: useStateSAT, useEffect: useEffectSAT } = React;
 
 const SAT_TARGET    = 1500;
@@ -316,7 +316,7 @@ function SAT() {
         <div style={{ fontFamily: 'var(--font-sans)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
           score history
         </div>
-        <SATChart scores={scores} />
+        {loading ? <Skeleton width="100%" height={96} radius={6} /> : <SATChart scores={scores} />}
       </div>
 
       {/* ── stats row ── */}
@@ -324,12 +324,23 @@ function SAT() {
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px 8px',
         paddingTop: 12, borderTop: '1px solid var(--border)', marginBottom: 12,
       }}>
-        <SATStat label="best"        value={best ?? '—'}      color={bestColor} />
-        <SATStat label="last"        value={lastScore ?? '—'} />
-        <SATStat label="gap to 1500" value={gap ?? '—'}       color={gap === 0 ? 'var(--pos)' : 'var(--warn)'} />
-        <SATStat label="hrs / week"  value={hoursThisWeek}    unit="h" />
-        <SATStat label="sessions"    value={sessions.length} />
-        <SATStat label="tests"       value={scores.length} />
+        {loading ? (
+          [0,1,2,3,4,5].map(i => (
+            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <Skeleton width="60%" height={8} />
+              <Skeleton width="45%" height={15} />
+            </div>
+          ))
+        ) : (
+          <>
+            <SATStat label="best"        value={best ?? '—'}      color={bestColor} />
+            <SATStat label="last"        value={lastScore ?? '—'} />
+            <SATStat label="gap to 1500" value={gap ?? '—'}       color={gap === 0 ? 'var(--pos)' : 'var(--warn)'} />
+            <SATStat label="hrs / week"  value={hoursThisWeek}    unit="h" />
+            <SATStat label="sessions"    value={sessions.length} />
+            <SATStat label="tests"       value={scores.length} />
+          </>
+        )}
       </div>
 
       {/* ── action buttons ── */}

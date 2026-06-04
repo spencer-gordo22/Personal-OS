@@ -177,12 +177,14 @@ function useLocalStorage(key, initial) {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       /* 1. localStorage — synchronous, zero latency */
       try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
-      /* 2. Supabase — async, persists across devices */
+      /* 2. Supabase — async, persists across devices.
+         kv_store.value is NOT NULL, so a null clears via delete (never upsert null). */
       (window._supaReady || Promise.resolve(null)).then(db => {
         if (!db) return;
-        db.from('kv_store')
-          .upsert({ key, value: next, updated_at: new Date().toISOString() }, { onConflict: 'key' })
-          .then(({ error }) => { if (error) console.warn('[supa write]', key, error.message); });
+        const q = (next === null || next === undefined)
+          ? db.from('kv_store').delete().eq('key', key)
+          : db.from('kv_store').upsert({ key, value: next, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        q.then(({ error }) => { if (error) console.warn('[supa write]', key, error.message); });
       });
       return next;
     });
@@ -205,4 +207,48 @@ function useIsMobile() {
   return isMobile;
 }
 
-Object.assign(window, { Icon, Card, Pill, Kpi, Delta, Sparkline, Bars, ProgressBar, SectionLbl, toISO, useLocalStorage, useIsMobile });
+/* ── Skeleton — pulsing gray placeholder (opacity pulse = GPU-accelerated) ── */
+function Skeleton({ width = '100%', height = 12, radius = 4, style }) {
+  return (
+    <span className="sos-skeleton" style={{
+      display: 'block', width, height, borderRadius: radius,
+      background: 'var(--bg-3)', ...style,
+    }} />
+  );
+}
+
+/* ── ErrorBoundary — isolates a crashing module so the rest of the dashboard
+      keeps working; shows a clean retry button instead of a blank screen. ── */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+    this.reset = this.reset.bind(this);
+  }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(err, info) {
+    console.error(`[ErrorBoundary] ${this.props.name || 'module'} crashed:`, err, info);
+  }
+  reset() { this.setState({ hasError: false }); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', gap: 10, textAlign: 'center' }}>
+          <Icon name="alert-triangle" size={18} style={{ color: 'var(--warn)' }} />
+          <span style={{ fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--fg-2)' }}>
+            {this.props.name || 'This module'} hit an error
+          </span>
+          <button onClick={this.reset} className="sos-tap" style={{
+            minHeight: 36, padding: '0 16px', background: 'var(--bg-3)',
+            border: '1px solid var(--accent)', borderRadius: 6, color: 'var(--accent)',
+            fontFamily: 'var(--font-mono)', fontSize: 11, letterSpacing: '0.06em', cursor: 'pointer',
+          }}>↻ Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+Object.assign(window, { Icon, Card, Pill, Kpi, Delta, Sparkline, Bars, ProgressBar, SectionLbl, Skeleton, ErrorBoundary, toISO, useLocalStorage, useIsMobile });

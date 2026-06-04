@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon */
+/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -218,7 +218,18 @@ function TasksPreview({ onNavigate }) {
     >
       {/* ── task list ── */}
       <div style={{ overflowY: 'auto', maxHeight: 300, WebkitOverflowScrolling: 'touch' }}>
-        {loading && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>loading…</div>}
+        {loading && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 0' }}>
+            {[0, 1, 2].map(i => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Skeleton width={14} height={14} radius={2} />
+                <Skeleton width={`${60 - i * 8}%`} height={12} />
+                <span style={{ flex: 1 }} />
+                <Skeleton width={28} height={10} />
+              </div>
+            ))}
+          </div>
+        )}
         {!loading && visible.length === 0 && (
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', padding: '4px 0' }}>all clear ✓ · add a task below</div>
         )}
@@ -543,24 +554,24 @@ function DashboardGrid({ isMobile, onNavigate }) {
       gridAutoRows: 'minmax(min-content, auto)',
     }}>
       {/* row 1: Chase Checking (restored, top-left) + finance + health */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Cash /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Investments /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 3' }}><HealthPulse /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Chase Checking"><Cash /></ErrorBoundary></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><ErrorBoundary name="Investments"><Investments /></ErrorBoundary></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 3' }}><ErrorBoundary name="Health Pulse"><HealthPulse /></ErrorBoundary></div>
 
       {/* row 2: SAT Prep tracker + Tasks preview — both coexist with Chase above */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}><SAT /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}><ErrorBoundary name="SAT Prep"><SAT /></ErrorBoundary></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}>
-        <TasksPreview onNavigate={onNavigate} />
+        <ErrorBoundary name="Tasks"><TasksPreview onNavigate={onNavigate} /></ErrorBoundary>
       </div>
 
       {/* row 3 — Workouts + Checklist unchanged */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}><Workouts /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><DailyChecklist /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}><ErrorBoundary name="Workouts"><Workouts /></ErrorBoundary></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Checklist"><DailyChecklist /></ErrorBoundary></div>
 
-      {/* row 3 */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Calendar /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Journal /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><Goals /></div>
+      {/* row 4 */}
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Calendar"><Calendar /></ErrorBoundary></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Journal"><Journal /></ErrorBoundary></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Goals"><Goals /></ErrorBoundary></div>
     </div>
   );
 }
@@ -585,24 +596,25 @@ function EmptyState({ label }) {
 /* ── per-module focused layouts ───────────────────────── */
 function ModuleView({ id, isMobile }) {
   const cols = isMobile ? '1fr' : 'repeat(12,1fr)';
+  const G = (name, node) => <ErrorBoundary name={name}>{node}</ErrorBoundary>;
   if (id === 'finance') return (
     <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 12 }}>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><Cash /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 7' }}><Investments /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}>{G('Chase Checking', <Cash />)}</div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 7' }}>{G('Investments', <Investments />)}</div>
     </div>
   );
   if (id === 'health') return (
     <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 12 }}>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><HealthPulse /></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}><Workouts /></div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}>{G('Health Pulse', <HealthPulse />)}</div>
+      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}>{G('Workouts', <Workouts />)}</div>
     </div>
   );
-  if (id === 'checklist') return <div style={{ maxWidth: isMobile ? '100%' : 560 }}><DailyChecklist /></div>;
-  if (id === 'crm')       return <CRM />;
-  if (id === 'journal')   return <div style={{ maxWidth: isMobile ? '100%' : 680 }}><Journal /></div>;
-  if (id === 'goals')     return <div style={{ maxWidth: isMobile ? '100%' : 560 }}><Goals /></div>;
-  if (id === 'calendar')  return <div style={{ maxWidth: isMobile ? '100%' : 560 }}><Calendar /></div>;
-  if (id === 'sat')       return <div style={{ maxWidth: isMobile ? '100%' : 720 }}><SAT /></div>;
+  if (id === 'checklist') return <div style={{ maxWidth: isMobile ? '100%' : 560 }}>{G('Checklist', <DailyChecklist />)}</div>;
+  if (id === 'crm')       return G('CRM', <CRM />);
+  if (id === 'journal')   return <div style={{ maxWidth: isMobile ? '100%' : 680 }}>{G('Journal', <Journal />)}</div>;
+  if (id === 'goals')     return <div style={{ maxWidth: isMobile ? '100%' : 560 }}>{G('Goals', <Goals />)}</div>;
+  if (id === 'calendar')  return <div style={{ maxWidth: isMobile ? '100%' : 560 }}>{G('Calendar', <Calendar />)}</div>;
+  if (id === 'sat')       return <div style={{ maxWidth: isMobile ? '100%' : 720 }}>{G('SAT Prep', <SAT />)}</div>;
   if (id === 'settings')  return <Settings />;
   return null;
 }
@@ -1082,10 +1094,49 @@ function Settings() {
 }
 
 /* ── root app ─────────────────────────────────────────── */
+/* ── useOnlineStatus — reactive navigator.onLine with proper listener cleanup ── */
+function useOnlineStatus() {
+  const [online, setOnline] = useStateApp(
+    () => (typeof navigator !== 'undefined' ? navigator.onLine : true)
+  );
+  useEffectApp(() => {
+    const goOnline  = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener('online',  goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online',  goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
+  return online;
+}
+
+/* ── OfflineBanner — clean fixed indicator shown only when offline ── */
+function OfflineBanner({ online }) {
+  if (online) return null;
+  return (
+    <div style={{
+      position: 'fixed', bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))',
+      left: '50%', transform: 'translateX(-50%)', zIndex: 9000,
+      display: 'flex', alignItems: 'center', gap: 8,
+      background: 'var(--bg-3)', border: '1px solid var(--warn)', borderRadius: 999,
+      padding: '7px 16px', boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+      pointerEvents: 'none',
+    }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--warn)' }} />
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--warn)', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+        Offline · showing cached data
+      </span>
+    </div>
+  );
+}
+
 function App() {
   const [active, setActive] = useStateApp('dashboard');
   const [cmdOpen, setCmdOpen] = useStateApp(false);
   const isMobile = useIsMobile();
+  const online   = useOnlineStatus();
 
   useEffectApp(() => {
     const onKey = (e) => {
@@ -1171,6 +1222,7 @@ function App() {
       </div>
 
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} />
+      <OfflineBanner online={online} />
     </div>
   );
 }

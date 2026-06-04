@@ -1,4 +1,4 @@
-/* global React, Card, Icon, useLocalStorage, useIsMobile */
+/* global React, Card, Icon, useLocalStorage, useIsMobile, Skeleton */
 const { useState: useStateInv, useEffect: useEffectInv } = React;
 
 /* ─────────────────────────────────────────────
@@ -187,27 +187,46 @@ function Investments() {
       }>
 
       {/* ══ portfolio summary ══════════════════════════════ */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
-        <PfKpi
-          label={isMobile ? 'value' : 'portfolio value'}
-          value={totalValue !== null ? `$${totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
-          compact={isMobile}
-        />
-        <PfKpi
-          label={isMobile ? 'gain/loss' : 'total gain / loss'}
-          value={totalGain$ !== null ? `${sgn(totalGain$)}${d$(totalGain$)}` : '—'}
-          sub={pct(totalGainPct)}
-          n={totalGain$}
-          compact={isMobile}
-        />
-        <PfKpi
-          label={isMobile ? 'today' : "today's change"}
-          value={totalDay$ !== null ? `${sgn(totalDay$)}${d$(totalDay$)}` : '—'}
-          sub={pct(totalDayPct)}
-          n={totalDay$}
-          compact={isMobile}
-        />
-      </div>
+      {(() => {
+        // Skeleton on first load — avoids flashing "—" before quotes arrive
+        const loadingQuotes = !hasLive && status !== 'stale';
+        if (loadingQuotes) {
+          return (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+              {[0, 1, 2].map(i => (
+                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <Skeleton width="70%" height={8} />
+                  <Skeleton width="90%" height={isMobile ? 16 : 20} />
+                  {i > 0 && <Skeleton width="50%" height={8} />}
+                </div>
+              ))}
+            </div>
+          );
+        }
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+            <PfKpi
+              label={isMobile ? 'value' : 'portfolio value'}
+              value={totalValue !== null ? `$${totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}
+              compact={isMobile}
+            />
+            <PfKpi
+              label={isMobile ? 'gain/loss' : 'total gain / loss'}
+              value={totalGain$ !== null ? `${sgn(totalGain$)}${d$(totalGain$)}` : '—'}
+              sub={pct(totalGainPct)}
+              n={totalGain$}
+              compact={isMobile}
+            />
+            <PfKpi
+              label={isMobile ? 'today' : "today's change"}
+              value={totalDay$ !== null ? `${sgn(totalDay$)}${d$(totalDay$)}` : '—'}
+              sub={pct(totalDayPct)}
+              n={totalDay$}
+              compact={isMobile}
+            />
+          </div>
+        );
+      })()}
 
       {/* ══ holdings table ════════════════════════════════════════════════════ */}
       {isMobile ? (

@@ -112,10 +112,6 @@ function HealthPulse() {
       const sleepJson = sleepRes.ok ? await sleepRes.json() : null;
       const cycleJson = cycleRes.ok ? await cycleRes.json() : null;
 
-      console.log('[WHOOP] recovery:', JSON.stringify(recJson).slice(0, 400));
-      console.log('[WHOOP] sleep:',    JSON.stringify(sleepJson).slice(0, 700));
-      console.log('[WHOOP] cycle:',    JSON.stringify(cycleJson).slice(0, 400));
-
       const rec        = recJson?.records?.[0];
       const sleepScore = sleepJson?.records?.[0]?.score;
       const cycleScore = cycleJson?.records?.[0]?.score;
