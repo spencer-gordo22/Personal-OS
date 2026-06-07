@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton */
+/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton, fetchTasks */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -125,15 +125,8 @@ function TasksPreview({ onNavigate }) {
   const [loading,     setLoading]     = useStateApp(true);
   const [expanded,    setExpanded]    = useStateApp(null);
   const [showAddForm, setShowAddForm] = useStateApp(false);
-
-  /* ── recurring reset helper ── */
-  function isRecurringDue(task) {
-    if (!task.recurring) return false;
-    if (!task.last_completed_at) return true;
-    const elapsed = Date.now() - new Date(task.last_completed_at).getTime();
-    const thresh  = { daily: 86400000, weekly: 604800000, monthly: 2592000000 };
-    return elapsed >= (thresh[task.interval] || thresh.daily);
-  }
+  const [pulse,       setPulse]       = useStateApp(false);   // pulses when new tasks arrive
+  const prevIds = React.useRef(new Set());
 
   /* ── sort: high→medium→low, then earliest due date ── */
   function sortTasks(list) {
@@ -151,55 +144,69 @@ function TasksPreview({ onNavigate }) {
   const fmtDate   = (d) => { if (!d) return null; const [,m,day] = d.split('-'); return `${TASK_MONTHS[+m-1]} ${+day}`; };
   const isOverdue = (d) => d && new Date(d + 'T23:59:59') < new Date();
 
-  /* ── load: open tasks + all recurring (to detect reset) ── */
-  useEffectApp(() => {
-    let cancelled = false;
-    (async () => {
-      const db = await (window._supaReady || Promise.resolve(window._supa || null));
-      if (!db || cancelled) { setLoading(false); return; }
-      const [{ data: openData }, { data: recurData }] = await Promise.all([
-        db.from('crm_items').select('*').eq('type','task').eq('status','open')
-          .order('created_at', { ascending: false }).limit(100),
-        db.from('crm_items').select('*').eq('type','task').eq('recurring',true)
-          .order('created_at', { ascending: false }).limit(50),
-      ]);
-      if (!cancelled) {
-        const seen = new Set(), merged = [];
-        for (const t of [...(openData||[]), ...(recurData||[])]) {
-          if (!seen.has(t.id)) { seen.add(t.id); merged.push(t); }
+  /* ── load via the SHARED fetchTasks(); pulse a dot when new tasks appear ── */
+  const loadTasks = React.useCallback(async (detectNew) => {
+    const list = await fetchTasks();
+    const ids  = new Set(list.map(t => t.id));
+    if (detectNew && prevIds.current.size > 0) {
+      for (const id of ids) {
+        if (!prevIds.current.has(id)) {
+          setPulse(true);
+          setTimeout(() => setPulse(false), 3000);
+          break;
         }
-        setTasks(merged);
-        setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    prevIds.current = ids;
+    setTasks(list);
+    setLoading(false);
   }, []);
 
-  /* ── mark done: recurring vs one-shot (confetti fires in onClick, NOT here) ── */
+  /* ── on mount + poll every 20s (cleaned up on unmount) ── */
+  useEffectApp(() => {
+    loadTasks(false);
+    const iv = setInterval(() => loadTasks(true), 20000);
+    return () => clearInterval(iv);
+  }, [loadTasks]);
+
+  /* ── mark done (confetti fires in onClick, NOT here) ──
+     recurring → stamp last_completed_at, keep open (fetchTasks hides it today,
+     it reappears tomorrow). non-recurring → close it. Then resync from Supabase. */
   const markDone = async (id) => {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
     const now = new Date().toISOString();
+    const db  = window._supa;
     if (task.recurring) {
-      setTasks(prev => prev.map(t =>
-        t.id === id ? { ...t, status: 'closed', last_completed_at: now } : t
-      ));
+      setTasks(prev => prev.filter(t => t.id !== id));   // optimistic: hide today
+      if (db) await db.from('crm_items').update({ last_completed_at: now, updated_at: now }).eq('id', id);
     } else {
       if (expanded === id) setExpanded(null);
       setTasks(prev => prev.filter(t => t.id !== id));
+      if (db) await db.from('crm_items').update({ status: 'closed', last_completed_at: now, updated_at: now }).eq('id', id);
     }
-    const db = window._supa;
-    if (db) await db.from('crm_items').update({ status:'closed', last_completed_at:now, updated_at:now }).eq('id', id);
+    loadTasks(false);   // resync so the count badge is always accurate
   };
 
-  /* ── computed ── */
-  const visible = sortTasks(tasks.filter(t => t.status === 'open' || isRecurringDue(t)));
+  /* ── computed: widget shows OPEN tasks (recurring-done-today already removed
+     by fetchTasks). Count badge reflects this live Supabase-derived list. ── */
+  const visible = sortTasks(tasks.filter(t => t.status === 'open'));
 
   return (
     <Card
       icon="check-square"
       label="tasks"
-      meta={loading ? '…' : `${visible.length} open`}
+      meta={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          {loading ? '…' : `${visible.length} open`}
+          {/* pulsing dot when new tasks arrive (e.g. via Telegram) */}
+          {pulse && (
+            <span className="sos-skeleton" style={{
+              width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)', display: 'inline-block',
+            }} title="new tasks" />
+          )}
+        </span>
+      }
       action={
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span
@@ -324,9 +331,9 @@ function TasksPreview({ onNavigate }) {
       {showAddForm && (
         <AddTaskModal
           onClose={() => setShowAddForm(false)}
-          onAdded={(newTask) => {
-            if (newTask) setTasks(prev => [...prev, newTask]);
+          onAdded={() => {
             setShowAddForm(false);
+            loadTasks(false);   // immediate resync after a successful insert
           }}
         />
       )}

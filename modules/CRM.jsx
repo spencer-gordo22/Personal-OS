@@ -39,9 +39,9 @@ function CRM() {
     return parts.join(' · ') || String(err);
   }
 
-  const loadItems = useCallbackCRM(async () => {
-    setLoading(true);
-    setError('');
+  /* silent=true → background poll (no loading flash, no error clobber) */
+  const loadItems = useCallbackCRM(async (silent) => {
+    if (!silent) { setLoading(true); setError(''); }
 
     /* Always await _supaReady — never read window._supa directly.
        On a cold Fly.io start, /api/config may not have returned yet
@@ -50,7 +50,7 @@ function CRM() {
     const db = await (window._supaReady || Promise.resolve(window._supa || null));
 
     if (!db) {
-      setError('Supabase not connected — check that SUPA_URL and SUPA_KEY are set on Fly.io (flyctl secrets list)');
+      if (!silent) setError('Supabase not connected — check that SUPA_URL and SUPA_KEY are set on Fly.io (flyctl secrets list)');
       setLoading(false);
       return;
     }
@@ -62,8 +62,7 @@ function CRM() {
       .limit(200);
 
     if (err) {
-      setError(fmtErr(err));
-      console.error('[CRM] Supabase query error:', err);
+      if (!silent) { setError(fmtErr(err)); console.error('[CRM] Supabase query error:', err); }
     } else {
       setItems(data || []);
       setError('');
@@ -71,7 +70,13 @@ function CRM() {
     setLoading(false);
   }, []);
 
-  useEffectCRM(() => { loadItems(); }, [loadItems]);
+  /* Initial load + poll every 20s so new tasks (incl. Telegram) appear and the
+     CRM/Tasks tab stays in sync with the home widget. Interval cleaned on unmount. */
+  useEffectCRM(() => {
+    loadItems(false);
+    const iv = setInterval(() => loadItems(true), 20000);
+    return () => clearInterval(iv);
+  }, [loadItems]);
 
   const toggleStatus = async (id, current) => {
     const next = current === 'open' ? 'closed' : 'open';
@@ -101,7 +106,7 @@ function CRM() {
     <Card icon="users" label="crm"
       meta={`${openCount} open`}
       action={
-        <span onClick={loadItems} title="Refresh" style={{ cursor:'pointer', color:'var(--fg-3)', display:'flex', alignItems:'center' }}>
+        <span onClick={() => loadItems(false)} title="Refresh" style={{ cursor:'pointer', color:'var(--fg-3)', display:'flex', alignItems:'center' }}>
           <Icon name="refresh-cw" size={13} />
         </span>
       }>

@@ -93,9 +93,18 @@ function HealthPulse() {
         fetch('/whoop/data?endpoint=cycle'),
       ]);
 
-      // 401 anywhere → token is dead. Show ONLY a clean "Reconnect Whoop"
-      // button — no status codes, no technical text. Keep last cached metrics.
-      if ([recRes, sleepRes, cycleRes].some(r => r.status === 401)) {
+      // Parse bodies (the server returns 200 with {reconnect:true} when the
+      // token is dead, or a 401 — handle both as "reconnect").
+      const recJson   = recRes.ok   ? await recRes.json().catch(() => null) : null;
+      const sleepJson = sleepRes.ok ? await sleepRes.json().catch(() => null) : null;
+      const cycleJson = cycleRes.ok ? await cycleRes.json().catch(() => null) : null;
+
+      // Reconnect signal → show ONLY a clean "Reconnect Whoop" button.
+      // No status codes, no technical text. Do NOT auto-retry — wait for the user.
+      const reconnect =
+        [recRes, sleepRes, cycleRes].some(r => r.status === 401) ||
+        [recJson, sleepJson, cycleJson].some(j => j && j.reconnect);
+      if (reconnect) {
         setWhoop401(true);
         setWhoopStatus('idle');
         setWhoopError('');
@@ -107,10 +116,6 @@ function HealthPulse() {
       if (!recRes.ok && !sleepRes.ok && !cycleRes.ok) {
         throw new Error(`WHOOP HTTP ${recRes.status}/${sleepRes.status}/${cycleRes.status}`);
       }
-
-      const recJson   = recRes.ok   ? await recRes.json()   : null;
-      const sleepJson = sleepRes.ok ? await sleepRes.json() : null;
-      const cycleJson = cycleRes.ok ? await cycleRes.json() : null;
 
       const rec        = recJson?.records?.[0];
       const sleepScore = sleepJson?.records?.[0]?.score;

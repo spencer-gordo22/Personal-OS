@@ -207,6 +207,47 @@ function useIsMobile() {
   return isMobile;
 }
 
+/* ── fetchTasks — the ONE shared task query used by the home widget AND the
+      CRM/Tasks tab so they always stay in sync. Reads crm_items (type=task),
+      ordered newest-first, and:
+        • hides completed (closed) NON-recurring tasks older than 24h
+        • hides recurring tasks already completed today (reappear tomorrow)
+      Returns the cleaned list; each consumer filters for its own display. ── */
+async function fetchTasks() {
+  const db = await (window._supaReady || Promise.resolve(window._supa || null));
+  if (!db) return [];
+  const { data, error } = await db
+    .from('crm_items')
+    .select('*')
+    .eq('type', 'task')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error || !data) {
+    if (error) console.warn('[fetchTasks]', error.message);
+    return [];
+  }
+  const now = Date.now();
+  const sameCalendarDay = (ts) => {
+    if (!ts) return false;
+    const d = new Date(ts), n = new Date(now);
+    return d.getFullYear() === n.getFullYear()
+        && d.getMonth()    === n.getMonth()
+        && d.getDate()     === n.getDate();
+  };
+  return data.filter(t => {
+    if (t.recurring) {
+      // recurring task done today → hide until tomorrow (same calendar day)
+      return !sameCalendarDay(t.last_completed_at);
+    }
+    if (t.status === 'closed') {
+      // non-recurring completed → keep only if completed within the last 24h
+      const ref = t.last_completed_at || t.updated_at || t.created_at;
+      return ref ? (now - new Date(ref).getTime()) <= 86400000 : false;
+    }
+    return true;
+  });
+}
+
 /* ── Skeleton — pulsing gray placeholder (opacity pulse = GPU-accelerated) ── */
 function Skeleton({ width = '100%', height = 12, radius = 4, style }) {
   return (
@@ -251,4 +292,4 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-Object.assign(window, { Icon, Card, Pill, Kpi, Delta, Sparkline, Bars, ProgressBar, SectionLbl, Skeleton, ErrorBoundary, toISO, useLocalStorage, useIsMobile });
+Object.assign(window, { Icon, Card, Pill, Kpi, Delta, Sparkline, Bars, ProgressBar, SectionLbl, Skeleton, ErrorBoundary, toISO, fetchTasks, useLocalStorage, useIsMobile });
