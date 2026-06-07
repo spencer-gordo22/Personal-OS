@@ -311,13 +311,23 @@ function SAT() {
         </div>
       )}
 
-      {/* ── score chart ── */}
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontFamily: 'var(--font-sans)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
-          score history
+      {/* ── score chart (compact one-liner when no tests yet) ── */}
+      {loading ? (
+        <div style={{ marginBottom: 12 }}>
+          <Skeleton width="100%" height={96} radius={6} />
         </div>
-        {loading ? <Skeleton width="100%" height={96} radius={6} /> : <SATChart scores={scores} />}
-      </div>
+      ) : scores.length === 0 ? (
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.04em', marginBottom: 12 }}>
+          No tests logged yet
+        </div>
+      ) : (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontFamily: 'var(--font-sans)', fontSize: 9, color: 'var(--fg-4)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
+            score history
+          </div>
+          <SATChart scores={scores} />
+        </div>
+      )}
 
       {/* ── stats row ── */}
       <div style={{

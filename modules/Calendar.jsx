@@ -312,8 +312,7 @@ function Calendar() {
       {status === 'checking' && (
         <div style={{
           fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-3)',
-          padding: '20px 0', letterSpacing: '0.08em', textTransform: 'uppercase',
-          textAlign: 'center',
+          padding: '2px 0', letterSpacing: '0.04em',
         }}>
           Checking connection…
         </div>
@@ -323,8 +322,7 @@ function Calendar() {
       {connected && status === 'loading' && (
         <div style={{
           fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-3)',
-          padding: '20px 0', letterSpacing: '0.08em', textTransform: 'uppercase',
-          textAlign: 'center',
+          padding: '2px 0', letterSpacing: '0.04em',
         }}>
           Fetching your events…
         </div>
@@ -373,12 +371,11 @@ function Calendar() {
         </div>
       )}
 
-      {/* no events */}
+      {/* no events — single compact line */}
       {connected && status === 'live' && events.length === 0 && (
         <div style={{
           fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-4)',
-          padding: '20px 0', letterSpacing: '0.06em', textTransform: 'uppercase',
-          textAlign: 'center',
+          padding: '2px 0', letterSpacing: '0.04em',
         }}>
           No events in the next 7 days
         </div>

@@ -61,9 +61,9 @@ function Goals() {
         </span>
       }>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {goals.map((g, i) => (
-          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
 
             {/* name row */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>

@@ -503,11 +503,11 @@ function Cash() {
           </div>
         )}
 
-        {transactions.length === 0 ? (
-          <div style={{ ...MONO, fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 0 6px' }}>
-            no transactions · press + to add
+        {transactions.length === 0 && !showAddTx ? (
+          <div style={{ ...MONO, fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.04em', padding: '2px 0' }}>
+            No transactions · press + to add
           </div>
-        ) : (
+        ) : transactions.length === 0 ? null : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {transactions.map(t => (
               <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '38px 1fr auto 14px', alignItems: 'center', gap: 8 }}>
@@ -557,11 +557,11 @@ function Cash() {
           </div>
         )}
 
-        {subscriptions.length === 0 ? (
-          <div style={{ ...MONO, fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 0 6px' }}>
-            no subscriptions · press + to add
+        {subscriptions.length === 0 && !showAddSub ? (
+          <div style={{ ...MONO, fontSize: 10, color: 'var(--fg-4)', letterSpacing: '0.04em', padding: '2px 0' }}>
+            No subscriptions · press + to add
           </div>
-        ) : (
+        ) : subscriptions.length === 0 ? null : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {subscriptions.map(s => (
               <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto 14px', alignItems: 'center', gap: 8 }}>

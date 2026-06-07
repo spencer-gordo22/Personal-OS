@@ -40,8 +40,9 @@ function Journal() {
           value={text}
           onChange={handleChange}
           placeholder="start writing…"
+          rows={4}
           style={{
-            width: '100%', minHeight: 120, resize: 'vertical',
+            width: '100%', minHeight: 76, resize: 'vertical',
             background: 'var(--bg-1)', border: '1px solid var(--border)',
             borderRadius: 4, padding: '10px 12px',
             fontFamily: 'var(--font-sans)', fontSize: 13, lineHeight: 1.65,
