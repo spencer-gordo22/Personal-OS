@@ -392,10 +392,10 @@ html, body {
     padding: 16px 16px 0;
   }
 
-  /* ── Grid: single column, 12px gap ── */
+  /* ── Grid: single column, zero gap (cards bumper to bumper) ── */
   .sos-dashboard-grid {
     grid-template-columns: 1fr !important;
-    gap: 12px !important;
+    gap: 0 !important;
   }
   .sos-dashboard-grid > div {
     grid-column: span 1 !important;
@@ -405,7 +405,7 @@ html, body {
 
   .sos-module-view {
     grid-template-columns: 1fr !important;
-    gap: 12px !important;
+    gap: 0 !important;
   }
   .sos-module-view > div {
     grid-column: span 1 !important;

@@ -557,7 +557,7 @@ function DashboardGrid({ isMobile, onNavigate }) {
     <div className="sos-dashboard-grid" style={{
       display: 'grid',
       gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
-      gap: 12,
+      gap: 0,
       gridAutoRows: 'min-content',
       alignItems: 'start',
     }}>
@@ -609,13 +609,13 @@ function ModuleView({ id, isMobile }) {
   const cols = isMobile ? '1fr' : 'repeat(12,1fr)';
   const G = (name, node) => <ErrorBoundary name={name}>{node}</ErrorBoundary>;
   if (id === 'finance') return (
-    <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'start' }}>
+    <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 0, alignItems: 'start' }}>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}>{G('Chase Checking', <Cash />)}</div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 7' }}>{G('Investments', <Investments />)}</div>
     </div>
   );
   if (id === 'health') return (
-    <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'start' }}>
+    <div className="sos-module-view" style={{ display: 'grid', gridTemplateColumns: cols, gap: 0, alignItems: 'start' }}>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}>{G('Health Pulse', <HealthPulse />)}</div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}>{G('Workouts', <Workouts />)}</div>
     </div>
