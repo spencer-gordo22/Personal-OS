@@ -20,7 +20,19 @@ function Clock({ timeOnly = false }) {
   );
 }
 
-function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile }) {
+/* Desktop top-nav items (center). Home → dashboard, Tasks → checklist. */
+const TOPNAV_ITEMS = [
+  { id: 'dashboard', label: 'Home' },
+  { id: 'checklist', label: 'Tasks' },
+  { id: 'finance',   label: 'Finance' },
+  { id: 'health',    label: 'Health' },
+  { id: 'settings',  label: 'Settings' },
+];
+
+/* Height of the fixed desktop top nav — keep in sync with .sos-main padding-top */
+const DESKTOP_NAV_H = 48;
+
+function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile, activeId, onSelect, onHome }) {
 
   /* ── Mobile layout: fixed top bar, logo left, time right ── */
   if (isMobile) {
@@ -59,87 +71,73 @@ function TopBar({ onOpenCommand, activePage = 'Dashboard', isMobile }) {
     );
   }
 
-  /* ── Desktop layout: full topbar ── */
+  /* ── Desktop layout: fixed full-width TOP NAV ──
+     logo left · nav items centered · time+date right */
+  const go = (id) => (id === 'dashboard' ? (onHome ? onHome() : onSelect && onSelect('dashboard')) : onSelect && onSelect(id));
+
   return (
     <header style={{
-      height: 52, background: 'var(--bg-0)',
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 600,
+      height: DESKTOP_NAV_H,
+      background: '#0A0A0F',
       borderBottom: '1px solid var(--border)',
-      display: 'flex', alignItems: 'center', gap: 12,
+      display: 'flex', alignItems: 'center',
       padding: '0 16px',
-      flexShrink: 0,
-      overflow: 'hidden', minWidth: 0, maxWidth: '100vw',
     }}>
 
-      {/* Brand */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 13,
-          color: 'var(--fg-1)', letterSpacing: '-0.02em', whiteSpace: 'nowrap',
-        }}>
+      {/* Left: brand */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', minWidth: 0 }}>
+        <span
+          onClick={() => go('dashboard')}
+          style={{
+            fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 14,
+            color: 'var(--fg-1)', letterSpacing: '-0.02em', whiteSpace: 'nowrap', cursor: 'pointer',
+          }}>
           Spencer<span style={{ color: 'var(--accent)' }}>_OS</span>
         </span>
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-3)',
-          letterSpacing: '0.08em', textTransform: 'uppercase', whiteSpace: 'nowrap',
-        }}>
-          v 4.2.1
-        </span>
       </div>
 
-      {/* Breadcrumb */}
-      <div style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0 }} />
-      <div style={{
-        fontFamily: 'var(--font-sans)', fontSize: 11, color: 'var(--fg-2)',
-        letterSpacing: '0.08em', textTransform: 'uppercase',
-        display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap',
-      }}>
-        <span>HOME</span>
-        <Icon name="chevron-right" size={12} style={{ color: 'var(--fg-4)' }} />
-        <span style={{ color: 'var(--fg-1)' }}>{activePage.toUpperCase()}</span>
-      </div>
+      {/* Center: nav items */}
+      <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+        {TOPNAV_ITEMS.map(it => {
+          const active = it.id === 'dashboard'
+            ? (activeId === 'dashboard')
+            : (activeId === it.id);
+          return (
+            <span
+              key={it.id}
+              onClick={() => go(it.id)}
+              className="sos-tap"
+              style={{
+                fontFamily: 'var(--font-sans)', fontSize: 11, fontWeight: 500,
+                letterSpacing: '0.08em', textTransform: 'uppercase',
+                padding: '6px 12px', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
+                color: active ? 'var(--accent)' : 'var(--fg-3)',
+                background: active ? 'rgba(0,212,255,0.08)' : 'transparent',
+              }}
+              onMouseEnter={e => { if (!active) e.currentTarget.style.color = 'var(--fg-1)'; }}
+              onMouseLeave={e => { if (!active) e.currentTarget.style.color = 'var(--fg-3)'; }}
+            >
+              {it.label}
+            </span>
+          );
+        })}
+      </nav>
 
-      <div style={{ flex: 1 }} />
-
-      {/* Command search */}
-      <button
-        onClick={onOpenCommand}
-        className="sos-topbar-cmd"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          height: 28, padding: '0 12px',
-          background: 'var(--bg-2)', border: '1px solid var(--border)',
-          borderRadius: 4, color: 'var(--fg-3)',
-          fontFamily: 'var(--font-mono)', fontSize: 12,
-          cursor: 'pointer', width: 280, flexShrink: 0,
-        }}
-      >
-        <Icon name="terminal" size={13} style={{ color: 'var(--accent)' }} />
-        <span>run command · jump to…</span>
-        <span style={{ flex: 1 }} />
-        <span style={{
-          fontSize: 10, padding: '2px 5px', border: '1px solid var(--border-strong)',
-          borderRadius: 2, color: 'var(--fg-2)',
-        }}>⌘ K</span>
-      </button>
-
-      {/* Status + clock */}
-      <div style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0 }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        <span className="pill pos" style={{ height: 18 }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--pos)' }} />
-          SYNC
+      {/* Right: command shortcut + clock */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 12, minWidth: 0 }}>
+        <span
+          onClick={onOpenCommand}
+          title="Command palette (⌘K)"
+          className="sos-tap"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+            color: 'var(--fg-3)', flexShrink: 0,
+          }}>
+          <Icon name="terminal" size={13} style={{ color: 'var(--accent)' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, border: '1px solid var(--border-strong)', borderRadius: 2, padding: '1px 4px' }}>⌘K</span>
         </span>
         <Clock />
-      </div>
-
-      {/* Avatar */}
-      <div style={{
-        width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
-        background: 'var(--bg-3)', border: '1px solid var(--border-strong)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-1)', fontWeight: 600,
-      }}>
-        SP
       </div>
 
     </header>

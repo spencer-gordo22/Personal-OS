@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton, fetchTasks */
+/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, BJJ, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton, fetchTasks */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -553,33 +553,45 @@ function AddTaskModal({ onClose, onAdded }) {
 
 /* ── full dashboard grid (default view) ───────────────── */
 function DashboardGrid({ isMobile, onNavigate }) {
-  return (
-    <div className="sos-dashboard-grid" style={{
-      display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'repeat(12, 1fr)',
-      gap: 0,
-      gridAutoRows: 'min-content',
-      alignItems: 'start',
-    }}>
-      {/* row 1: Chase Checking (restored, top-left) + finance + health */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Chase Checking"><Cash /></ErrorBoundary></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 5' }}><ErrorBoundary name="Investments"><Investments /></ErrorBoundary></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 3' }}><ErrorBoundary name="Health Pulse"><HealthPulse /></ErrorBoundary></div>
-
-      {/* row 2: SAT Prep tracker + Tasks preview — both coexist with Chase above */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}><ErrorBoundary name="SAT Prep"><SAT /></ErrorBoundary></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 6' }}>
+  /* ── Mobile: single stacked column, zero gap ── */
+  if (isMobile) {
+    return (
+      <div className="sos-dashboard-grid" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
         <ErrorBoundary name="Tasks"><TasksPreview onNavigate={onNavigate} /></ErrorBoundary>
+        <ErrorBoundary name="Health Pulse"><HealthPulse /></ErrorBoundary>
+        <ErrorBoundary name="Workouts"><Workouts /></ErrorBoundary>
+        <ErrorBoundary name="Investments"><Investments /></ErrorBoundary>
+        <ErrorBoundary name="Checklist"><DailyChecklist /></ErrorBoundary>
+        <ErrorBoundary name="SAT Prep"><SAT /></ErrorBoundary>
+        <ErrorBoundary name="BJJ / Combat"><BJJ /></ErrorBoundary>
+        <ErrorBoundary name="Calendar"><Calendar /></ErrorBoundary>
+        <ErrorBoundary name="Goals"><Goals /></ErrorBoundary>
       </div>
+    );
+  }
 
-      {/* row 3 — Workouts + Checklist unchanged */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 8' }}><ErrorBoundary name="Workouts"><Workouts /></ErrorBoundary></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Checklist"><DailyChecklist /></ErrorBoundary></div>
-
-      {/* row 4 */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Calendar"><Calendar /></ErrorBoundary></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Journal"><Journal /></ErrorBoundary></div>
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Goals"><Goals /></ErrorBoundary></div>
+  /* ── Desktop: three flush flex columns, zero gap anywhere ── */
+  const col = { flex: 1, display: 'flex', flexDirection: 'column', gap: 0, minWidth: 0 };
+  return (
+    <div className="sos-dashboard-grid" style={{ display: 'flex', gap: 0, alignItems: 'flex-start' }}>
+      {/* Left column */}
+      <div style={col}>
+        <ErrorBoundary name="Tasks"><TasksPreview onNavigate={onNavigate} /></ErrorBoundary>
+        <ErrorBoundary name="Checklist"><DailyChecklist /></ErrorBoundary>
+        <ErrorBoundary name="BJJ / Combat"><BJJ /></ErrorBoundary>
+      </div>
+      {/* Center column */}
+      <div style={col}>
+        <ErrorBoundary name="Health Pulse"><HealthPulse /></ErrorBoundary>
+        <ErrorBoundary name="Workouts"><Workouts /></ErrorBoundary>
+        <ErrorBoundary name="Calendar"><Calendar /></ErrorBoundary>
+      </div>
+      {/* Right column */}
+      <div style={col}>
+        <ErrorBoundary name="Investments"><Investments /></ErrorBoundary>
+        <ErrorBoundary name="SAT Prep"><SAT /></ErrorBoundary>
+        <ErrorBoundary name="Goals"><Goals /></ErrorBoundary>
+      </div>
     </div>
   );
 }
@@ -1173,59 +1185,25 @@ function App() {
           onOpenCommand={() => setCmdOpen(true)}
           activePage={pageLabel}
           isMobile={isMobile}
+          activeId={active}
+          onSelect={setActive}
+          onHome={() => setActive('dashboard')}
         />
 
         <main className="sos-main" style={{
           flex: 1, overflowY: 'auto', overflowX: 'hidden',
-          padding: isMobile ? 0 : 12,
+          /* desktop: clear the fixed 48px top nav, zero side padding (edge-to-edge) */
+          padding: isMobile ? 0 : '48px 0 0 0',
           backgroundColor: 'var(--bg-1)',
-          backgroundImage: isMobile ? 'none' : 'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.025) 1px, transparent 0)',
-          backgroundSize: '16px 16px',
         }}>
 
-          {/* page title strip — desktop only */}
-          {!isMobile && (
-            <div className="sos-page-title-section" style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-              padding: '8px 4px 16px', flexWrap: 'wrap', gap: 8,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-                <h1 className="sos-page-title" style={{ fontFamily: 'var(--font-sans)', fontSize: 24, fontWeight: 600, letterSpacing: '-0.02em', color: 'var(--fg-1)' }}>
-                  {pageLabel}
-                </h1>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  {todayStamp()}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* ── 16px side padding wrapper on mobile ── */}
+          {/* ── 16px side padding wrapper on mobile only ── */}
           <div className={isMobile ? 'sos-content-pad' : undefined}>
             {isDashboard
               ? <DashboardGrid isMobile={isMobile} onNavigate={setActive} />
               : <ModuleView id={active} isMobile={isMobile} />
             }
           </div>
-
-          {/* footer status strip — desktop only */}
-          {!isMobile && (
-            <div style={{
-              marginTop: 16, padding: '10px 4px',
-              borderTop: '1px solid var(--border)',
-              display: 'flex', justifyContent: 'space-between',
-              fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-3)',
-              letterSpacing: '0.08em', textTransform: 'uppercase',
-            }}>
-              <span>spencer_os · v 4.5.0 · build e3f7a</span>
-              <span style={{ display: 'flex', gap: 14 }}>
-                <span>uptime · 14d 06h</span>
-                <span>sync · ok</span>
-                <span>latency · 12 ms</span>
-                <span style={{ color: 'var(--pos)' }}>● all systems nominal</span>
-              </span>
-            </div>
-          )}
         </main>
       </div>
 

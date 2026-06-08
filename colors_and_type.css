@@ -313,11 +313,13 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: var(--card-header-h);
-  padding: 0 var(--s-3);
+  height: 28px;                /* compact, dense */
+  padding: 0 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
 }
+/* compact 10px small-caps label inside card headers */
+.card-header .label { font-size: 10px; }
 .card-body {
   padding: var(--s-3);
 }
@@ -527,8 +529,9 @@ html, body {
 
 /* Desktop: sidebar visible, no bottom nav */
 @media (min-width: 769px) {
+  /* Desktop nav now lives in the fixed TOP bar — hide the left rail + bottom nav */
   .sos-bottom-nav { display: none !important; }
-  .sos-sidebar    { display: flex !important; }
+  .sos-sidebar    { display: none !important; }
 }
 
 /* ── Skeleton loader: gentle opacity pulse (GPU-accelerated, no layout shift) ── */
