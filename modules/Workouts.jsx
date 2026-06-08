@@ -37,6 +37,20 @@ function getWeekDays() {
   return days;
 }
 
+/* Count consecutive prior days with an entry (for BJJ streak) */
+function calcStreak(historyMap, key = 'done') {
+  let s = 0;
+  const today = new Date();
+  for (let i = 1; i <= 365; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const entry = (historyMap || {})[toISO(d)];
+    if (entry && entry[key]) s++;
+    else break;
+  }
+  return s;
+}
+
 /* Guess workout type from name or exercise list */
 function guessType(title = '', exercises = []) {
   const t = title.toLowerCase();
@@ -73,6 +87,13 @@ function Workouts() {
     week.forEach(d => { init[d.iso] = { type: d.defType, done: false }; });
     return init;
   });
+
+  /* ── BJJ / combat attendance (inline strip, same localStorage key as before) ── */
+  const [bjj, setBjj] = useLocalStorage('sos_bjj', {});
+  const bjjDone   = week.filter(d => bjj[d.iso] && bjj[d.iso].done).length;
+  const bjjStreak = calcStreak(bjj, 'done');
+  const toggleBjj = (iso) =>
+    setBjj(b => ({ ...b, [iso]: { done: !(b[iso] && b[iso].done) } }));
 
   /* ── week-strip type picker ── */
   const [picking, setPicking] = useStateWkt(null);
@@ -312,6 +333,36 @@ function Workouts() {
           </div>
         </div>
       )}
+
+      {/* ══ BJJ / combat strip — inline, below the paste/parse area ══ */}
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--border)' }}>
+        <span className="label-micro" style={{ display: 'block', color: 'var(--fg-4)', marginBottom: 6, letterSpacing: '0.08em' }}>
+          BJJ / COMBAT · {bjjDone}/7 this week{bjjStreak > 0 ? ` · ${bjjStreak}d streak` : ''}
+        </span>
+        <div className="sos-bjj-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
+          {week.map(d => {
+            const went = bjj[d.iso] && bjj[d.iso].done;
+            return (
+              <div
+                key={d.iso}
+                onClick={() => toggleBjj(d.iso)}
+                className="sos-tap"
+                title={went ? 'Mark absent' : 'Mark attended'}
+                style={{
+                  background: went ? 'rgba(255,181,71,0.15)' : 'var(--bg-1)',
+                  border: `1px solid ${went ? 'var(--warn)' : d.isToday ? 'var(--border-strong)' : 'var(--border)'}`,
+                  borderRadius: 4, padding: '6px 4px',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+                  cursor: 'pointer', userSelect: 'none',
+                }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: d.isToday ? 'var(--accent)' : 'var(--fg-4)', letterSpacing: '0.06em' }}>{d.day}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 500, color: went ? 'var(--warn)' : 'var(--fg-3)', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{d.date}</span>
+                <span style={{ fontSize: 10, lineHeight: 1 }}>{went ? '🥋' : '·'}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* ══ type picker portal ══ */}
       {picking && pickPos && ReactDOM.createPortal(

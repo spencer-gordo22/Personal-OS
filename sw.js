@@ -6,7 +6,7 @@
      • Everything else → network-first, fall back to cache
    ============================================================ */
 
-const CACHE_NAME   = 'spencer-os-v57';
+const CACHE_NAME   = 'spencer-os-v58';
 const STATIC_URLS  = [
   '/',
   '/index.html',
@@ -21,7 +21,6 @@ const STATIC_URLS  = [
   '/modules/Investments.jsx?v=41',
   '/modules/HealthPulse.jsx?v=41',
   '/modules/Workouts.jsx?v=41',
-  '/modules/BJJ.jsx?v=41',
   '/modules/DailyChecklist.jsx?v=41',
   '/modules/CRM.jsx?v=41',
   '/modules/Calendar.jsx?v=41',

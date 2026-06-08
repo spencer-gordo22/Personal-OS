@@ -1,4 +1,4 @@
-/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, BJJ, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton, fetchTasks */
+/* global React, Sidebar, TopBar, Cash, Investments, HealthPulse, DailyChecklist, Calendar, Workouts, Journal, Goals, CRM, CommandPalette, SAT, useLocalStorage, useIsMobile, Card, Icon, ErrorBoundary, Skeleton, fetchTasks */
 const { useState: useStateApp, useEffect: useEffectApp } = React;
 
 const DAYS   = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -580,9 +580,6 @@ function DashboardGrid({ isMobile, onNavigate }) {
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Calendar"><Calendar /></ErrorBoundary></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Journal"><Journal /></ErrorBoundary></div>
       <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="Goals"><Goals /></ErrorBoundary></div>
-
-      {/* row 5 — BJJ / Combat tracker */}
-      <div style={{ gridColumn: isMobile ? 'span 1' : 'span 4' }}><ErrorBoundary name="BJJ / Combat"><BJJ /></ErrorBoundary></div>
     </div>
   );
 }
