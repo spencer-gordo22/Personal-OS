@@ -78,7 +78,7 @@ WHOOP_AUTH_URL  = 'https://api.prod.whoop.com/oauth/oauth2/auth'
 WHOOP_TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token'
 WHOOP_API_BASE  = 'https://api.prod.whoop.com/developer/v2'
 WHOOP_API_V1    = 'https://api.prod.whoop.com/developer/v1'
-WHOOP_SCOPE     = 'read:recovery read:sleep read:cycles read:workout'
+WHOOP_SCOPE     = 'offline read:recovery read:sleep read:cycles read:workout'
 
 # WHOOP redirect URI — must match exactly what's registered in WHOOP Developer Portal.
 # Always use the Fly.io URL; local OAuth won't work (WHOOP requires HTTPS).
